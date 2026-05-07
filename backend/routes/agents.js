@@ -10,9 +10,9 @@
 
 import { Router } from 'express';
 import { checkPermission } from '../middleware/checkPermission.js';
-import { runAgent } from './runner/agentRunner.js';
-import { runProcurementFork } from './runner/forkRunner.js';
-import { readMemory, listMemoryFiles } from './runner/agentMemory.js';
+import { runAgent } from '../agents/runner/agentRunner.js';
+import { runProcurementFork } from '../agents/runner/forkRunner.js';
+import { readMemory, listMemoryFiles } from '../agents/runner/agentMemory.js';
 import pool from '../db.js';
 
 const router = new Router();
