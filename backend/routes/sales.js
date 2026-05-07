@@ -10,14 +10,15 @@ router.get('/', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
     try {
         conn = await pool.getConnection();
         const rows = await conn.query(
-            `SELECT tx.transaction_id, tx.than_id, tx.retailer_id, tx.sale_date,
-                    tx.quantity, tx.price, tx.discount, tx.margin, tx.payment_status, tx.notes,
+            `SELECT tx.transaction_id, tx.than_id, tx.retailer_id, tx.transaction_date AS sale_date,
+                    tx.quantity, tx.price, tx.discount, tx.margin,
+                    tx.payment_status, tx.notes,
                     t.than_code, t.fabric_type, t.color, t.design,
                     r.shop_name, r.market_location
              FROM transactions tx
              LEFT JOIN thans t ON tx.than_id = t.than_id
              LEFT JOIN retailers r ON tx.retailer_id = r.retailer_id
-             ORDER BY tx.sale_date DESC, tx.transaction_id DESC
+             ORDER BY tx.transaction_date DESC, tx.transaction_id DESC
              LIMIT 200`
         );
         res.json(rows);
@@ -56,7 +57,8 @@ router.post('/', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
 
         const result = await conn.query(
             `INSERT INTO transactions
-                (than_id, retailer_id, sale_date, quantity, price, discount, margin, payment_status, notes)
+                (than_id, retailer_id, transaction_date, quantity, price, discount,
+                 margin, payment_status, notes)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 than_id,

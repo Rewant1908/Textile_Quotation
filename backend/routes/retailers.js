@@ -11,7 +11,8 @@ router.get('/', async (req, res) => {
         conn = await pool.getConnection();
         const rows = await conn.query(
             `SELECT retailer_id, shop_name, contact_person, phone, market_location,
-                    payment_pattern, preferred_categories, preferred_price_segment, outstanding_balance
+                    payment_pattern, preferred_categories, preferred_price_segment,
+                    outstanding_balance, notes
              FROM retailers ORDER BY shop_name`
         );
         res.json(rows);
@@ -23,7 +24,7 @@ router.get('/', async (req, res) => {
 router.post('/', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
     const {
         shop_name, contact_person, phone, market_location,
-        payment_pattern, preferred_categories, preferred_price_segment
+        payment_pattern, preferred_categories, preferred_price_segment, notes
     } = req.body;
     if (!shop_name?.trim()) return res.status(400).json({ error: 'shop_name is required' });
     let conn;
@@ -32,16 +33,18 @@ router.post('/', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
         const result = await conn.query(
             `INSERT INTO retailers
                 (shop_name, contact_person, phone, market_location,
-                 payment_pattern, preferred_categories, preferred_price_segment, outstanding_balance)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+                 payment_pattern, preferred_categories, preferred_price_segment,
+                 outstanding_balance, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
             [
                 shop_name.trim(),
                 contact_person?.trim() || null,
                 phone?.trim() || null,
                 market_location?.trim() || null,
-                payment_pattern || 'unknown',
+                payment_pattern || 'on_delivery',
                 preferred_categories?.trim() || null,
-                preferred_price_segment || 'mid'
+                preferred_price_segment || 'mixed',
+                notes?.trim() || null
             ]
         );
         res.status(201).json({ success: true, retailer_id: Number(result.insertId) });
@@ -53,21 +56,30 @@ router.post('/', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
 router.put('/:id', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
     const {
         shop_name, contact_person, phone, market_location,
-        payment_pattern, preferred_categories, preferred_price_segment, outstanding_balance
+        payment_pattern, preferred_categories, preferred_price_segment,
+        outstanding_balance, notes
     } = req.body;
     if (!shop_name?.trim()) return res.status(400).json({ error: 'shop_name is required' });
     let conn;
     try {
         conn = await pool.getConnection();
         await conn.query(
-            `UPDATE retailers SET shop_name=?, contact_person=?, phone=?, market_location=?,
-             payment_pattern=?, preferred_categories=?, preferred_price_segment=?, outstanding_balance=?
+            `UPDATE retailers
+             SET shop_name=?, contact_person=?, phone=?, market_location=?,
+                 payment_pattern=?, preferred_categories=?, preferred_price_segment=?,
+                 outstanding_balance=?, notes=?
              WHERE retailer_id=?`,
             [
-                shop_name.trim(), contact_person?.trim() || null, phone?.trim() || null,
-                market_location?.trim() || null, payment_pattern || 'unknown',
-                preferred_categories?.trim() || null, preferred_price_segment || 'mid',
-                Number(outstanding_balance || 0), req.params.id
+                shop_name.trim(),
+                contact_person?.trim() || null,
+                phone?.trim() || null,
+                market_location?.trim() || null,
+                payment_pattern || 'on_delivery',
+                preferred_categories?.trim() || null,
+                preferred_price_segment || 'mixed',
+                Number(outstanding_balance || 0),
+                notes?.trim() || null,
+                req.params.id
             ]
         );
         res.json({ success: true });
