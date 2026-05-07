@@ -58,11 +58,9 @@ export default function SaleRecorder({ user }) {
         }
     }
 
-    // Live margin preview
     const previewMargin = () => {
         if (!selectedThan || !form.quantity || !form.price) return null
-        const margin = (Number(form.price) - Number(selectedThan.cost_per_meter)) * Number(form.quantity) - Number(form.discount || 0)
-        return margin
+        return (Number(form.price) - Number(selectedThan.cost_per_meter)) * Number(form.quantity) - Number(form.discount || 0)
     }
 
     const handleSubmit = async e => {
@@ -80,6 +78,7 @@ export default function SaleRecorder({ user }) {
             setSuccess(`✓ Sale recorded — Margin: ${money(res.data.margin)}`)
             setForm(emptyForm)
             setSelectedThan(null)
+            setSearch('')
             loadAll()
         } catch (e) { setError(e?.response?.data?.error || 'Sale failed') }
         finally { setSaving(false) }
@@ -100,28 +99,31 @@ export default function SaleRecorder({ user }) {
 
     if (loading) return <div className="loading">Loading sale recorder...</div>
 
+    const labelStyle = { display: 'flex', flexDirection: 'column', gap: 4 }
+    const capStyle   = { fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }
+
     return (
         <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 1rem 2rem' }}>
             <h2 style={{ marginBottom: '1.2rem' }}>Record a Sale</h2>
 
             {fetchError && (
                 <div style={{ marginBottom: '1rem', padding: '0.75rem 1rem', borderRadius: 8, background: '#fef2f2', border: '1px solid #fca5a5', fontSize: 14, color: '#b91c1c' }}>
-                    ⚠ Could not load data: {fetchError} — <button onClick={loadAll} style={{ textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', color: '#b91c1c', fontSize: 14 }}>Retry</button>
+                    ⚠ Could not load data: {fetchError} —{' '}
+                    <button onClick={loadAll} style={{ textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', color: '#b91c1c', fontSize: 14 }}>Retry</button>
                 </div>
             )}
 
-            {/* ── Sale Form ── */}
             <section className="card" style={{ marginBottom: '2rem' }}>
                 <form onSubmit={handleSubmit}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
 
-                        {/* Than search + select */}
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, gridColumn: 'span 2' }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Search & Select Than *</span>
+                    {/* ── Row 1: Than search + select (full width) ── */}
+                    <div style={{ marginBottom: '1rem' }}>
+                        <label style={labelStyle}>
+                            <span style={capStyle}>Search &amp; Select Than *</span>
                             <input
                                 value={search}
                                 onChange={e => setSearch(e.target.value)}
-                                placeholder="Filter by code, fabric, color, design..."
+                                placeholder="Filter by code, fabric, color, design…"
                                 className="input"
                                 style={{ marginBottom: 6 }}
                             />
@@ -131,56 +133,70 @@ export default function SaleRecorder({ user }) {
                                     <strong style={{ color: 'var(--color-text)' }}>Go to Bale Intake → open a bale → add thans first.</strong>
                                 </div>
                             ) : (
-                                <select name="than_id" value={form.than_id} onChange={handleChange} className="input" size={4} style={{ height: 'auto' }}>
+                                <select
+                                    name="than_id"
+                                    value={form.than_id}
+                                    onChange={handleChange}
+                                    className="input"
+                                    size={5}
+                                    style={{ height: 'auto', width: '100%', fontFamily: 'monospace', fontSize: 13 }}
+                                >
                                     <option value="">-- select --</option>
                                     {filteredThans.length === 0 && thans.length > 0
                                         ? <option disabled>No thans match "{search}"</option>
                                         : filteredThans.map(t => (
                                             <option key={t.than_id} value={t.than_id}>
-                                                {t.than_code} | {[t.color, t.design, t.fabric_type].filter(Boolean).join(' / ')} | {Number(t.remaining_stock).toFixed(1)}m left | NPR {Number(t.selling_price).toFixed(2)}/m
+                                                {t.than_code.padEnd(9)} | {[t.color, t.design, t.fabric_type].filter(Boolean).join(' / ').padEnd(40)} | {Number(t.remaining_stock).toFixed(1)}m | NPR {Number(t.selling_price).toFixed(2)}/m
                                             </option>
                                         ))
                                     }
                                 </select>
                             )}
                         </label>
+                    </div>
 
-                        {/* Selected than info */}
+                    {/* ── Row 2: Selected than info card + 3 key fields ── */}
+                    <div style={{ display: 'grid', gridTemplateColumns: selectedThan ? '260px 1fr 1fr 1fr' : '1fr 1fr 1fr', gap: '1rem', marginBottom: '1rem', alignItems: 'start' }}>
+
                         {selectedThan && (
-                            <div style={{ background: 'var(--color-surface-offset)', borderRadius: 8, padding: '0.75rem 1rem', fontSize: 13, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                <strong>{selectedThan.than_code}</strong>
+                            <div style={{ background: 'var(--color-surface-offset)', borderRadius: 8, padding: '0.75rem 1rem', fontSize: 13, display: 'flex', flexDirection: 'column', gap: 5, borderLeft: '3px solid var(--color-primary)' }}>
+                                <strong style={{ fontSize: 14 }}>{selectedThan.than_code}</strong>
                                 <span style={{ color: 'var(--color-text-muted)' }}>{[selectedThan.color, selectedThan.design, selectedThan.fabric_type].filter(Boolean).join(' / ')}</span>
                                 <span>Stock: <b>{Number(selectedThan.remaining_stock).toFixed(1)} m</b></span>
-                                <span>Cost/m: NPR {Number(selectedThan.cost_per_meter).toFixed(2)}</span>
-                                <span>Sell/m: NPR {Number(selectedThan.selling_price).toFixed(2)}</span>
+                                <span>Cost/m: <b>NPR {Number(selectedThan.cost_per_meter).toFixed(2)}</b></span>
+                                <span>Sell/m: <b>NPR {Number(selectedThan.selling_price).toFixed(2)}</b></span>
                             </div>
                         )}
 
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Retailer</span>
+                        <label style={labelStyle}>
+                            <span style={capStyle}>Retailer</span>
                             <select name="retailer_id" value={form.retailer_id} onChange={handleChange} className="input">
                                 <option value="">Walk-in / Unknown</option>
                                 {retailers.map(r => <option key={r.retailer_id} value={r.retailer_id}>{r.shop_name}{r.market_location ? ` — ${r.market_location}` : ''}</option>)}
                             </select>
                         </label>
 
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Quantity (meters) *</span>
+                        <label style={labelStyle}>
+                            <span style={capStyle}>Quantity (meters) *</span>
                             <input name="quantity" type="number" step="0.01" min="0.01" value={form.quantity} onChange={handleChange} className="input" placeholder="e.g. 10.5" />
                         </label>
 
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Price / meter (NPR) *</span>
+                        <label style={labelStyle}>
+                            <span style={capStyle}>Price / meter (NPR) *</span>
                             <input name="price" type="number" step="0.01" min="0.01" value={form.price} onChange={handleChange} className="input" placeholder="Auto-filled from Than" />
                         </label>
+                    </div>
 
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Discount (NPR)</span>
+                    {/* ── Row 3: Secondary fields ── */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
+
+                        <label style={labelStyle}>
+                            <span style={capStyle}>Discount (NPR)</span>
                             <input name="discount" type="number" step="0.01" min="0" value={form.discount} onChange={handleChange} className="input" placeholder="0" />
                         </label>
 
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Payment Status</span>
+                        <label style={labelStyle}>
+                            <span style={capStyle}>Payment Status</span>
                             <select name="payment_status" value={form.payment_status} onChange={handleChange} className="input">
                                 <option value="paid">Paid</option>
                                 <option value="pending">Pending</option>
@@ -188,18 +204,18 @@ export default function SaleRecorder({ user }) {
                             </select>
                         </label>
 
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Sale Date</span>
+                        <label style={labelStyle}>
+                            <span style={capStyle}>Sale Date</span>
                             <input name="sale_date" type="date" value={form.sale_date} onChange={handleChange} className="input" />
                         </label>
 
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '.04em' }}>Notes</span>
+                        <label style={labelStyle}>
+                            <span style={capStyle}>Notes</span>
                             <input name="notes" value={form.notes} onChange={handleChange} className="input" placeholder="Optional" />
                         </label>
                     </div>
 
-                    {/* Live margin preview */}
+                    {/* ── Margin preview ── */}
                     {margin !== null && (
                         <div style={{ marginBottom: '1rem', padding: '0.75rem 1rem', borderRadius: 8, background: margin >= 0 ? '#f0fdf4' : '#fef2f2', border: `1px solid ${margin >= 0 ? '#86efac' : '#fca5a5'}`, fontSize: 14 }}>
                             <strong>Margin preview: </strong>
@@ -216,7 +232,7 @@ export default function SaleRecorder({ user }) {
                     {success && <p style={{ color: 'var(--color-success)', marginBottom: '.6rem', fontSize: 14 }}>{success}</p>}
 
                     <button type="submit" className="btn btn-primary" disabled={saving || thans.length === 0}>
-                        {saving ? 'Recording...' : 'Record Sale'}
+                        {saving ? 'Recording…' : 'Record Sale'}
                     </button>
                 </form>
             </section>
@@ -255,7 +271,7 @@ export default function SaleRecorder({ user }) {
                                 ))}
                             </tbody>
                         </table>
-                      </div>
+                    </div>
                 }
             </section>
         </div>
