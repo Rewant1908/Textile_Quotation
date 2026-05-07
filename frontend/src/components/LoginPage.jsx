@@ -23,7 +23,6 @@ function mountRippleCanvas() {
   const COLS = 64, ROWS = 40
   const ctx  = canvas.getContext('2d')
 
-  /* logical pixel dimensions — CSS scales to full viewport */
   canvas.width  = COLS
   canvas.height = ROWS
 
@@ -55,7 +54,6 @@ function mountRippleCanvas() {
     if (!active) return
     raf = requestAnimationFrame(tick)
 
-    /* propagate ripple */
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         if (mx >= 0) {
@@ -63,13 +61,12 @@ function mountRippleCanvas() {
           const d2 = dx*dx + dy*dy
           if (d2 < 80) pts[r][c].dy += (1 - d2/80) * 0.12
         }
-        pts[r][c].dy *= 0.88          /* damping */
+        pts[r][c].dy *= 0.88
         pts[r][c].y   = r + pts[r][c].dy
       }
     }
 
     ctx.clearRect(0, 0, COLS, ROWS)
-    /* draw horizontal weft threads */
     for (let r = 1; r < ROWS - 1; r += 2) {
       ctx.beginPath()
       ctx.strokeStyle = r % 4 === 0
@@ -77,20 +74,15 @@ function mountRippleCanvas() {
         : 'rgba(143,29,29,0.22)'
       ctx.lineWidth = 0.35
       ctx.moveTo(0, pts[r][0].y)
-      for (let c = 1; c < COLS; c++) {
-        ctx.lineTo(c, pts[r][c].y)
-      }
+      for (let c = 1; c < COLS; c++) ctx.lineTo(c, pts[r][c].y)
       ctx.stroke()
     }
-    /* draw vertical warp threads */
     for (let c = 1; c < COLS - 1; c += 3) {
       ctx.beginPath()
       ctx.strokeStyle = 'rgba(143,29,29,0.14)'
       ctx.lineWidth = 0.2
       ctx.moveTo(pts[0][c].x, 0)
-      for (let r = 1; r < ROWS; r++) {
-        ctx.lineTo(pts[r][c].x, r)
-      }
+      for (let r = 1; r < ROWS; r++) ctx.lineTo(pts[r][c].x, r)
       ctx.stroke()
     }
   }
@@ -105,10 +97,9 @@ function mountRippleCanvas() {
 
 /* ================================================================
    GSAP PRELOADER TIMELINE
-   All animated props: transform + opacity — GPU composited only.
+   Phase 3 uses a letter-by-letter stagger reveal for "KT Impex"
    ================================================================ */
 function runPreloader(onDone) {
-  /* respect prefers-reduced-motion */
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     document.getElementById('kt-preloader')?.classList.add('pre-done')
     onDone()
@@ -132,7 +123,6 @@ function runPreloader(onDone) {
     duration: 0.75,
     ease: 'power2.inOut',
   }, 0.1)
-  /* bolt holds then sweeps off right */
   .to('.pre-bolt', {
     xPercent: 110,
     duration: 0.55,
@@ -163,20 +153,44 @@ function runPreloader(onDone) {
   }, 0.9)
   .to('.pre-needle', { x: '100vw', duration: 0.5, ease: 'power2.inOut' }, 0.92)
   .to('.pre-weave',  { opacity: 1, duration: 0.4 }, 1.1)
-  /* threads fade */
   .to('.pre-thread', { opacity: 0, duration: 0.35 }, 1.35)
 
-  /* ── PHASE 3: KT Impex logo (1.5s → 2.6s) ───────────────── */
-  .to('.pre-silk', { opacity: 1, duration: 0.4 }, 1.4)
-  .fromTo('.pre-logo',
-    { opacity: 0, scale: 0.78, filter: 'blur(16px)', y: 24 },
-    { opacity: 1, scale: 1,    filter: 'blur(0px)',  y: 0, duration: 0.65, ease: 'back.out(1.6)' },
+  /* ── PHASE 3: Letter-by-letter name reveal (1.45s → 2.65s) ── */
+  tl.to('.pre-silk', { opacity: 1, duration: 0.35 }, 1.4)
+
+  /* Container slides up from below */
+  tl.fromTo('.pre-logo',
+    { opacity: 0, y: 32, filter: 'blur(8px)' },
+    { opacity: 1, y: 0,  filter: 'blur(0px)', duration: 0.4, ease: 'power3.out' },
     1.45
   )
-  .to('.pre-divider', { scaleX: 1, duration: 0.5, transformOrigin: 'center', ease: 'power2.out' }, 1.7)
-  .to('.pre-brand-sub', { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, 1.82)
 
-  /* logo hold until ~2.65s */
+  /* Each letter of "KT Impex" drops in from y:−28 with stagger */
+  tl.fromTo('.pre-letter',
+    { opacity: 0, y: -28, rotateX: -80, filter: 'blur(6px)' },
+    {
+      opacity: 1, y: 0, rotateX: 0, filter: 'blur(0px)',
+      stagger: { each: 0.07, ease: 'power1.inOut' },
+      duration: 0.42,
+      ease: 'back.out(1.8)',
+    },
+    1.55
+  )
+
+  /* Gold cursor blink stops — swap cursor for gold underline */
+  tl.to('.pre-cursor', { opacity: 0, duration: 0.2, repeat: 5, yoyo: true }, 1.55)
+  tl.to('.pre-cursor', { opacity: 0, duration: 0.15 }, 2.05)
+
+  /* Gold divider draws under the name */
+  tl.to('.pre-divider', {
+    scaleX: 1,
+    duration: 0.55,
+    transformOrigin: 'center',
+    ease: 'power2.out',
+  }, 1.88)
+
+  /* Subtitle fades up */
+  tl.to('.pre-brand-sub', { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, 2.02)
 
   /* ── PHASE 4: Curtain exit (2.65s → 3.4s) ───────────────── */
   .fromTo(['.pre-curtain-left', '.pre-curtain-right'],
@@ -188,11 +202,10 @@ function runPreloader(onDone) {
     },
     2.65
   )
-  /* logo fades as curtains part */
   .to('.pre-logo', { opacity: 0, scale: 0.92, duration: 0.35 }, 2.65)
   .to('.pre-silk',  { opacity: 0, duration: 0.3 }, 2.65)
 
-  /* ── Page reveal (overlaps curtain exit) ─────────────────── */
+  /* ── Page reveal ─────────────────────────────────────────── */
   .to('.page-reveal', {
     opacity: 1,
     y: 0,
@@ -202,7 +215,6 @@ function runPreloader(onDone) {
     onStart: () => document.querySelector('.page-reveal')?.classList.add('pre-visible'),
   }, 3.0)
 
-  /* ── Tear down preloader DOM ─────────────────────────────── */
   tl.add(() => {
     document.getElementById('kt-preloader')?.classList.add('pre-done')
     onDone()
@@ -213,11 +225,15 @@ function runPreloader(onDone) {
 /* ================================================================
    COMPONENT
    ================================================================ */
+
+/* "KT Impex" split into individual letter spans + cursor */
+const BRAND_LETTERS = 'KT Impex'.split('')
+
 export default function LoginPage({ onLogin }) {
-  const [isSignup,     setIsSignup]     = useState(false)
-  const [error,        setError]        = useState('')
-  const [success,      setSuccess]      = useState('')
-  const [loading,      setLoading]      = useState(false)
+  const [isSignup,      setIsSignup]      = useState(false)
+  const [error,         setError]         = useState('')
+  const [success,       setSuccess]       = useState('')
+  const [loading,       setLoading]       = useState(false)
   const [preloaderDone, setPreloaderDone] = useState(false)
   const ranRef = useRef(false)
 
@@ -225,12 +241,9 @@ export default function LoginPage({ onLogin }) {
     if (ranRef.current) return
     ranRef.current = true
 
-    /* set page-reveal initial state before GSAP touches it */
     gsap.set('.page-reveal', { opacity: 0, y: 18, filter: 'blur(6px)' })
-
     runPreloader(() => setPreloaderDone(true))
 
-    /* mount ripple only on pointer devices */
     let cleanup
     if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
       cleanup = mountRippleCanvas()
@@ -263,7 +276,7 @@ export default function LoginPage({ onLogin }) {
 
   return (
     <>
-      {/* ── RIPPLE CANVAS (ambient bg) ────────────────────── */}
+      {/* ── RIPPLE CANVAS ─────────────────────────────────── */}
       <canvas id="kt-ripple-canvas" aria-hidden="true" />
 
       {/* ── PRELOADER ─────────────────────────────────────── */}
@@ -287,15 +300,23 @@ export default function LoginPage({ onLogin }) {
         <div className="pre-needle" />
         <div className="pre-weave"  />
 
-        {/* Phase 3: Logo */}
+        {/* Phase 3: Letter-by-letter name */}
         <div className="pre-silk" />
         <div className="pre-logo">
-          <div className="pre-badge">KT</div>
-          <div className="pre-brand">
-            <span className="pre-brand-name">KT Impex</span>
-            <div className="pre-divider" />
-            <span className="pre-brand-sub">Premium Textile Wholesale</span>
+          {/* Letter row */}
+          <div className="pre-name-row" aria-label="KT Impex">
+            {BRAND_LETTERS.map((ch, i) =>
+              ch === ' '
+                ? <span key={i} className="pre-letter-space" aria-hidden="true" />
+                : <span key={i} className="pre-letter" aria-hidden="true">{ch}</span>
+            )}
+            {/* blinking cursor that disappears when typing ends */}
+            <span className="pre-cursor" aria-hidden="true">|</span>
           </div>
+
+          {/* Gold rule + subtitle */}
+          <div className="pre-divider" />
+          <span className="pre-brand-sub">Premium Textile Wholesale</span>
         </div>
 
         {/* Phase 4: Curtains */}
