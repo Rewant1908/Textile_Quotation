@@ -7,7 +7,8 @@ const pool = createPool({
     user:            process.env.DB_USER || 'root',
     password:        process.env.DB_PASS,
     database:        process.env.DB_NAME || 'kt_impex',
-    connectionLimit: 5
+    connectionLimit: 5,
+    bigIntAsNumber:  true   // prevents "Do not know how to serialize a BigInt" from COUNT/SUM
 });
 
 export default pool;
