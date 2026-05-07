@@ -1,17 +1,18 @@
 import { useState, Component } from 'react'
-import CustomerForm from './components/CustomerForm'
-import QuotationForm from './components/QuotationForm'
-import QuotationHistory from './components/QuotationHistory'
+import CustomerForm       from './components/CustomerForm'
+import QuotationForm      from './components/QuotationForm'
+import QuotationHistory   from './components/QuotationHistory'
 import AdminProductManager from './components/AdminProductManager'
 import OperationsDashboard from './components/OperationsDashboard'
-import BaleManager from './components/BaleManager'
-import RetailerManager from './components/RetailerManager'
-import SaleRecorder from './components/SaleRecorder'
-import LoginPage from './components/LoginPage'
+import BaleManager        from './components/BaleManager'
+import RetailerManager    from './components/RetailerManager'
+import SaleRecorder       from './components/SaleRecorder'
+import SupplierManager    from './components/SupplierManager'
+import LoginPage          from './components/LoginPage'
 import './App.css'
 
 const USER_TABS  = ['Register Dealer', 'Create Quotation', 'My Quotations']
-const ADMIN_TABS = ['Operations', 'Record Sale', 'Retailers', 'Bale Intake', 'Quotation Requests', 'Manage Products']
+const ADMIN_TABS = ['Operations', 'Record Sale', 'Retailers', 'Suppliers', 'Bale Intake', 'Quotation Requests', 'Manage Products']
 
 const STORAGE_KEY = 'kt_impex_user'
 
@@ -40,8 +41,7 @@ class TabErrorBoundary extends Component {
                         <p style={{ color: '#7f1d1d', fontSize: 14, marginBottom: '1rem' }}>
                             {this.state.error?.message || 'Unknown error'}
                         </p>
-                        <button
-                            className="btn btn-primary"
+                        <button className="btn btn-primary"
                             onClick={() => this.setState({ hasError: false, error: null })}>
                             Try again
                         </button>
@@ -62,17 +62,8 @@ function App() {
     })
     const [activeTab, setActiveTab] = useState(0)
 
-    const handleLogin = (u) => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(u))
-        setUser(u)
-        setActiveTab(0)
-    }
-
-    const handleLogout = () => {
-        localStorage.removeItem(STORAGE_KEY)
-        setUser(null)
-        setActiveTab(0)
-    }
+    const handleLogin  = (u) => { localStorage.setItem(STORAGE_KEY, JSON.stringify(u)); setUser(u); setActiveTab(0) }
+    const handleLogout = ()  => { localStorage.removeItem(STORAGE_KEY); setUser(null); setActiveTab(0) }
 
     if (!user) return <LoginPage onLogin={handleLogin} />
 
@@ -90,9 +81,7 @@ function App() {
                     </span>
                 </div>
                 <div className="userbar">
-                    <span className="user-pill">
-                        {isAdmin ? 'Admin' : 'Dealer'}: {user.username}
-                    </span>
+                    <span className="user-pill">{isAdmin ? 'Admin' : 'Dealer'}: {user.username}</span>
                     <button className="btn btn-logout" onClick={handleLogout}>Logout</button>
                 </div>
             </header>
@@ -112,16 +101,17 @@ function App() {
                     {isAdmin ? (
                         <>
                             {activeTab === 0 && <OperationsDashboard user={user} />}
-                            {activeTab === 1 && <SaleRecorder user={user} />}
-                            {activeTab === 2 && <RetailerManager user={user} />}
-                            {activeTab === 3 && <BaleManager user={user} />}
-                            {activeTab === 4 && <QuotationHistory user={user} />}
-                            {activeTab === 5 && <AdminProductManager user={user} />}
+                            {activeTab === 1 && <SaleRecorder        user={user} />}
+                            {activeTab === 2 && <RetailerManager     user={user} />}
+                            {activeTab === 3 && <SupplierManager     user={user} />}
+                            {activeTab === 4 && <BaleManager         user={user} />}
+                            {activeTab === 5 && <QuotationHistory    user={user} />}
+                            {activeTab === 6 && <AdminProductManager user={user} />}
                         </>
                     ) : (
                         <>
                             {activeTab === 0 && <CustomerForm />}
-                            {activeTab === 1 && <QuotationForm user={user} />}
+                            {activeTab === 1 && <QuotationForm    user={user} />}
                             {activeTab === 2 && <QuotationHistory user={user} />}
                         </>
                     )}
