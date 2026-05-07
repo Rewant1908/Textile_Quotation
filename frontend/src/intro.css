@@ -3,9 +3,9 @@
    GSAP-driven. All animated props: transform + opacity only.
    ================================================================= */
 
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap');
 
-/* ── Body paint — instant, before any JS ──────────────────────── */
+/* ── Body paint — instant, before any JS ──────────────────── */
 body { background: #0d0806; }
 
 /* ================================================================
@@ -21,7 +21,6 @@ body { background: #0d0806; }
   align-items: center;
   justify-content: center;
   pointer-events: all;
-  /* visibility toggled by GSAP, not display:none — avoids reflow */
 }
 
 /* background woven texture — zero runtime cost */
@@ -35,7 +34,7 @@ body { background: #0d0806; }
   pointer-events: none;
 }
 
-/* ── PHASE 1: Fabric bolt ──────────────────────────────────────── */
+/* ── PHASE 1: Fabric bolt ──────────────────────────────────── */
 .pre-bolt {
   position: absolute;
   top: 0; left: 0;
@@ -66,7 +65,6 @@ body { background: #0d0806; }
     linear-gradient(108deg, #3d0e0e, #8f1d1d 30%, #c0392b 54%, #8f1d1d 76%, #2a0808);
 }
 
-/* silk sheen strip — GSAP moves via xPercent */
 .pre-bolt-sheen {
   position: absolute;
   top: 0; left: 0;
@@ -83,7 +81,7 @@ body { background: #0d0806; }
   transform: translateX(-100%) skewX(-8deg);
 }
 
-/* ── PHASE 1b: Drape panels ──────────────────────────────────── */
+/* ── PHASE 1b: Drape panels ────────────────────────────── */
 .pre-drapes {
   position: absolute;
   inset: 0;
@@ -104,7 +102,7 @@ body { background: #0d0806; }
 .pre-drape:nth-child(2) { left:30%; width:44%; background: linear-gradient(180deg, rgba(185,137,69,.75) 0%, rgba(143,29,29,.5) 55%, transparent 100%); border-radius: 0 0 65% 50%; }
 .pre-drape:nth-child(3) { left:58%; width:38%; background: linear-gradient(180deg, rgba(255,248,237,.35) 0%, rgba(143,29,29,.45) 55%, transparent 100%); border-radius: 0 0 50% 65%; }
 
-/* ── PHASE 2: Thread lines ────────────────────────────────────── */
+/* ── PHASE 2: Thread lines ──────────────────────────────── */
 .pre-threads {
   position: absolute;
   inset: 0;
@@ -130,7 +128,6 @@ body { background: #0d0806; }
 .pre-thread:nth-child(7) { top:78%; background: linear-gradient(90deg, transparent, rgba(185,137,69,.5), transparent); }
 .pre-thread:nth-child(8) { top:88%; background: linear-gradient(90deg, transparent, rgba(143,29,29,.6), transparent); }
 
-/* glowing needle tip */
 .pre-needle {
   position: absolute;
   top: 50%; width: 8px; height: 8px;
@@ -141,7 +138,7 @@ body { background: #0d0806; }
   box-shadow: 0 0 10px rgba(255,248,237,.9), 0 0 24px rgba(185,137,69,.8), 0 0 48px rgba(185,137,69,.4);
 }
 
-/* ── PHASE 2b: Woven grid ─────────────────────────────────────── */
+/* ── PHASE 2b: Woven grid ────────────────────────────────── */
 .pre-weave {
   position: absolute;
   inset: 0;
@@ -152,7 +149,12 @@ body { background: #0d0806; }
     repeating-linear-gradient(0deg,  rgba(185,137,69,.13) 0 1px, transparent 1px 18px);
 }
 
-/* ── PHASE 3: Logo ───────────────────────────────────────────── */
+/* ================================================================
+   PHASE 3: Letter-by-letter name reveal
+   ── .pre-logo is the centred column container
+   ── .pre-name-row holds individual .pre-letter spans
+   ── .pre-cursor blinks while typing, then fades
+   ================================================================ */
 .pre-logo {
   position: relative;
   z-index: 10;
@@ -162,95 +164,97 @@ body { background: #0d0806; }
   gap: 20px;
   opacity: 0;
   will-change: transform, opacity, filter;
+  perspective: 800px;      /* enables rotateX on children */
 }
 
-.pre-badge {
-  width: 110px; height: 110px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 36% 34%, #c0392b, #5f1111 68%);
-  color: #fff8ed;
-  font-family: 'Playfair Display', serif;
-  font-size: 44px;
-  font-weight: 700;
+/* Letter row — flex so each letter sits side-by-side */
+.pre-name-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: center;
-  position: relative;
-  box-shadow:
-    0 0 0 3px rgba(185,137,69,.75),
-    0 0 0 7px rgba(143,29,29,.3),
-    0 0 52px rgba(143,29,29,.9),
-    0 0 100px rgba(143,29,29,.45);
-  animation: badgePulse 2s ease-in-out infinite alternate;
+  /* very tight tracking to mimic Playfair Display natural spacing */
+  gap: 0;
+  line-height: 1;
 }
 
-/* rotating embroidery hoop ring */
-.pre-badge::before {
-  content: '';
-  position: absolute;
-  inset: -12px;
-  border-radius: 50%;
-  border: 1.5px dashed rgba(185,137,69,.55);
-  animation: ringRotate 8s linear infinite;
-}
-
-/* diagonal weave over badge */
-.pre-badge::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background:
-    repeating-linear-gradient(45deg,  rgba(255,255,255,.07) 0 2px, transparent 2px 7px),
-    repeating-linear-gradient(-45deg, rgba(255,255,255,.05) 0 2px, transparent 2px 7px);
-  pointer-events: none;
-}
-
-@keyframes badgePulse {
-  0%   { box-shadow: 0 0 0 3px rgba(185,137,69,.75), 0 0 0 7px rgba(143,29,29,.3), 0 0 52px rgba(143,29,29,.9),  0 0 100px rgba(143,29,29,.45); }
-  100% { box-shadow: 0 0 0 5px rgba(185,137,69,.95), 0 0 0 11px rgba(143,29,29,.2), 0 0 80px rgba(192,57,43,1),  0 0 140px rgba(143,29,29,.6); }
-}
-
-@keyframes ringRotate {
-  to { transform: rotate(360deg); }
-}
-
-.pre-brand { display:flex; flex-direction:column; align-items:center; gap:10px; }
-
-.pre-brand-name {
-  font-family: 'Playfair Display', serif;
-  font-size: clamp(48px, 10vw, 96px);
+/* Each letter — initial state set by GSAP (opacity:0, y:-28, rotateX:-80) */
+.pre-letter {
+  display: inline-block;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(52px, 11vw, 104px);
   font-weight: 700;
   color: #fff8ed;
+  letter-spacing: .01em;
+  will-change: transform, opacity, filter;
+  transform-style: preserve-3d;
+  /* subtle glow — constant after GSAP animates in */
+  text-shadow:
+    0 0 48px rgba(255,248,237,.5),
+    0 0 90px rgba(185,137,69,.35),
+    0 2px 14px rgba(0,0,0,.6);
+  animation: letterShine 2.8s ease-in-out infinite alternate;
+  /* pause animation until letter is visible */
+  animation-play-state: running;
+}
+
+/* Subtle shimmer cycling across the name after it appears */
+@keyframes letterShine {
+  0%   { text-shadow: 0 0 48px rgba(255,248,237,.5),  0 0 90px rgba(185,137,69,.35), 0 2px 14px rgba(0,0,0,.6); }
+  100% { text-shadow: 0 0 80px rgba(255,248,237,.95), 0 0 130px rgba(185,137,69,.7), 0 2px 10px rgba(0,0,0,.4); }
+}
+
+/* Italic style for the lower-case portion — optional, matches Playfair's elegance */
+/* The 'I', 'm', 'p', 'e', 'x' part of "Impex" will naturally italic via font */
+.pre-letter:nth-child(n+5) {
+  /* letters of 'Impex' (index 4+) — same weight, slight colour warmth */
+  color: #f5e8d0;
+}
+
+/* Word-space between KT and Impex */
+.pre-letter-space {
+  display: inline-block;
+  width: clamp(12px, 2.2vw, 26px);
+}
+
+/* Blinking cursor */
+.pre-cursor {
+  display: inline-block;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(52px, 11vw, 104px);
+  font-weight: 300;
+  color: rgba(185,137,69,.9);
   line-height: 1;
-  letter-spacing: -.01em;
-  text-shadow: 0 0 40px rgba(255,248,237,.55), 0 2px 12px rgba(0,0,0,.5);
-  animation: nameShine 2.4s ease-in-out infinite alternate;
+  will-change: opacity;
+  animation: cursorBlink 0.55s step-end infinite;
+  margin-left: 3px;
+  /* vertical alignment matches letters */
+  vertical-align: baseline;
 }
 
-@keyframes nameShine {
-  0%   { text-shadow: 0 0 40px rgba(255,248,237,.55), 0 2px 12px rgba(0,0,0,.5); }
-  100% { text-shadow: 0 0 70px rgba(255,248,237,1), 0 0 24px rgba(185,137,69,.75), 0 2px 12px rgba(0,0,0,.3); }
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
 }
 
+/* Gold rule under name */
+.pre-divider {
+  height: 1px;
+  width: clamp(180px, 32vw, 320px);
+  background: linear-gradient(90deg, transparent, rgba(185,137,69,.9), transparent);
+  transform: scaleX(0);
+  will-change: transform;
+}
+
+/* Subtitle */
 .pre-brand-sub {
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: .24em;
+  letter-spacing: .26em;
   text-transform: uppercase;
   color: rgba(185,137,69,.92);
   opacity: 0;
   transform: translateY(8px);
   will-change: opacity, transform;
-}
-
-/* self-drawing gold divider */
-.pre-divider {
-  height: 1px;
-  width: clamp(160px, 28vw, 280px);
-  background: linear-gradient(90deg, transparent, rgba(185,137,69,.9), transparent);
-  transform: scaleX(0);
-  will-change: transform;
 }
 
 /* silk shimmer lines behind logo */
@@ -276,7 +280,9 @@ body { background: #0d0806; }
   100% { background-position: 100% 100%; }
 }
 
-/* ── PHASE 4: Curtain exit ────────────────────────────────────── */
+/* ================================================================
+   PHASE 4: Curtain exit
+   ================================================================ */
 .pre-curtain {
   position: absolute;
   top: 0; width: 50%; height: 100%;
@@ -299,7 +305,6 @@ body { background: #0d0806; }
 .pre-curtain-left  { left: 0; transform-origin: left center; }
 .pre-curtain-right { right: 0; transform-origin: right center; }
 
-/* curtain edge sheen */
 .pre-curtain::after {
   content: '';
   position: absolute;
@@ -309,7 +314,9 @@ body { background: #0d0806; }
 .pre-curtain-left::after  { right: 0; }
 .pre-curtain-right::after { left: 0; transform: scaleX(-1); }
 
-/* ── Preloader progress bar ───────────────────────────────────── */
+/* ================================================================
+   Progress bar + done state
+   ================================================================ */
 .pre-progress {
   position: absolute;
   bottom: 0; left: 0;
@@ -319,18 +326,13 @@ body { background: #0d0806; }
   box-shadow: 0 0 8px rgba(185,137,69,.7);
 }
 
-/* ── Preloader done — remove from paint tree ──────────────────── */
-#kt-preloader.pre-done {
-  display: none;
-}
+#kt-preloader.pre-done { display: none; }
 
 
 /* =================================================================
    AMBIENT BACKGROUND SYSTEM (throughout site)
-   3 layers — all transform/opacity only, GPU composited
    ================================================================= */
 
-/* Layer 1: Static woven canvas — zero CPU, permanent */
 .page-reveal::before {
   content: '';
   position: fixed;
@@ -342,7 +344,6 @@ body { background: #0d0806; }
     repeating-linear-gradient(0deg,  rgba(185,137,69,.03) 0 1px, transparent 1px 22px);
 }
 
-/* Layer 2: Slow silk shimmer — 12s loop, GPU only */
 .page-reveal::after {
   content: '';
   position: fixed;
@@ -366,7 +367,6 @@ body { background: #0d0806; }
   100% { background-position: 100% 100%; }
 }
 
-/* Layer 3: Canvas ripple — injected by JS, pointer devices only */
 #kt-ripple-canvas {
   position: fixed;
   inset: 0;
@@ -374,10 +374,9 @@ body { background: #0d0806; }
   pointer-events: none;
   opacity: .55;
   contain: strict;
-  display: none; /* shown by JS after pointer check */
+  display: none;
 }
 
-/* ── Page reveal ──────────────────────────────────────────────── */
 .page-reveal {
   position: relative;
   z-index: 1;
@@ -385,14 +384,14 @@ body { background: #0d0806; }
   will-change: opacity, transform;
   pointer-events: none;
 }
-.page-reveal.pre-visible {
-  pointer-events: all;
-}
+.page-reveal.pre-visible { pointer-events: all; }
 
-/* ── Reduced motion ───────────────────────────────────────────── */
+/* ── Reduced motion ───────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   #kt-preloader { display: none; }
   .page-reveal  { opacity: 1 !important; transform: none !important; pointer-events: all; }
   .page-reveal::after { animation: none; }
   #kt-ripple-canvas { display: none !important; }
+  .pre-letter { animation: none; }
+  .pre-cursor { animation: none; opacity: 0; }
 }
