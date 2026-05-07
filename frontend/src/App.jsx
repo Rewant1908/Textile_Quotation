@@ -1,18 +1,28 @@
 import { useState, Component } from 'react'
-import CustomerForm       from './components/CustomerForm'
-import QuotationForm      from './components/QuotationForm'
-import QuotationHistory   from './components/QuotationHistory'
-import AdminProductManager from './components/AdminProductManager'
-import OperationsDashboard from './components/OperationsDashboard'
-import BaleManager        from './components/BaleManager'
-import RetailerManager    from './components/RetailerManager'
-import SaleRecorder       from './components/SaleRecorder'
-import SupplierManager    from './components/SupplierManager'
-import LoginPage          from './components/LoginPage'
+import CustomerForm         from './components/CustomerForm'
+import QuotationForm        from './components/QuotationForm'
+import QuotationHistory     from './components/QuotationHistory'
+import AdminProductManager  from './components/AdminProductManager'
+import OperationsDashboard  from './components/OperationsDashboard'
+import BaleManager          from './components/BaleManager'
+import RetailerManager      from './components/RetailerManager'
+import SaleRecorder         from './components/SaleRecorder'
+import SupplierManager      from './components/SupplierManager'
+import LoginPage            from './components/LoginPage'
+import DeadStockAnalytics   from './components/DeadStockAnalytics'
 import './App.css'
 
 const USER_TABS  = ['Register Dealer', 'Create Quotation', 'My Quotations']
-const ADMIN_TABS = ['Operations', 'Record Sale', 'Retailers', 'Suppliers', 'Bale Intake', 'Quotation Requests', 'Manage Products']
+const ADMIN_TABS = [
+    'Operations',
+    'Dead Stock',
+    'Record Sale',
+    'Retailers',
+    'Suppliers',
+    'Bale Intake',
+    'Quotation Requests',
+    'Manage Products',
+]
 
 const STORAGE_KEY = 'kt_impex_user'
 
@@ -100,13 +110,14 @@ function App() {
                 <TabErrorBoundary tabKey={activeTab}>
                     {isAdmin ? (
                         <>
-                            {activeTab === 0 && <OperationsDashboard user={user} />}
-                            {activeTab === 1 && <SaleRecorder        user={user} />}
-                            {activeTab === 2 && <RetailerManager     user={user} />}
-                            {activeTab === 3 && <SupplierManager     user={user} />}
-                            {activeTab === 4 && <BaleManager         user={user} />}
-                            {activeTab === 5 && <QuotationHistory    user={user} />}
-                            {activeTab === 6 && <AdminProductManager user={user} />}
+                            {activeTab === 0 && <OperationsDashboard  user={user} />}
+                            {activeTab === 1 && <DeadStockAnalytics   user={user} />}
+                            {activeTab === 2 && <SaleRecorder         user={user} />}
+                            {activeTab === 3 && <RetailerManager      user={user} />}
+                            {activeTab === 4 && <SupplierManager      user={user} />}
+                            {activeTab === 5 && <BaleManager          user={user} />}
+                            {activeTab === 6 && <QuotationHistory     user={user} />}
+                            {activeTab === 7 && <AdminProductManager  user={user} />}
                         </>
                     ) : (
                         <>
