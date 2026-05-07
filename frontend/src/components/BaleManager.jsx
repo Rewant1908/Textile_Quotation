@@ -38,14 +38,18 @@ export default function BaleManager({ user }) {
     const [submittingThan, setSubmittingThan] = useState(false)
     const [loadingThans, setLoadingThans]     = useState(false)
 
-    const authHeader = () => ({ 'x-user-id': user.user_id, 'x-user-role': user.role })
+    // authHeader MUST be defined before fetchBales useCallback
+    const authHeader = useCallback(
+        () => ({ 'x-user-id': user.user_id, 'x-user-role': user.role }),
+        [user]
+    )
 
     const fetchBales = useCallback(async () => {
         try {
             const res = await API.get('/bales', { headers: authHeader() })
             setBales(res.data)
         } catch (e) { console.error(e) }
-    }, [])
+    }, [authHeader])
 
     useEffect(() => {
         fetchBales()
