@@ -8,7 +8,7 @@ export default function AdminProductManager({ user }) {
     const [toast, setToast]       = useState(null)
 
     const load = () =>
-        fetch(`${API}/api/products`).then(r => r.json()).then(setProducts)
+        API.get('/products').then(r => setProducts(r.data))
 
     useEffect(() => { load() }, [])
 
@@ -20,25 +20,22 @@ export default function AdminProductManager({ user }) {
     const handleSave = async () => {
         if (!form.product_name || !form.category || !form.base_price)
             return showToast('All fields are required', 'error')
-        const method = editId ? 'PUT' : 'POST'
-        const url    = editId ? `${API}/api/products/${editId}` : `${API}/api/products`
-        const res    = await fetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                ...form,
-                base_price: parseFloat(form.base_price),
-                user_id: user?.user_id
-            })
-        })
-        const data = await res.json()
-        if (data.success || data.product_id) {
-            showToast(editId ? 'Product updated!' : 'Product added!', 'success')
-            setForm({ product_name: '', category: '', base_price: '' })
-            setEditId(null)
-            load()
-        } else {
-            showToast(data.error || 'Failed', 'error')
+        try {
+            const payload = { ...form, base_price: parseFloat(form.base_price), user_id: user?.user_id }
+            const res = editId
+                ? await API.put(`/products/${editId}`, payload)
+                : await API.post('/products', payload)
+            const data = res.data
+            if (data.success || data.product_id) {
+                showToast(editId ? 'Product updated!' : 'Product added!', 'success')
+                setForm({ product_name: '', category: '', base_price: '' })
+                setEditId(null)
+                load()
+            } else {
+                showToast(data.error || 'Failed', 'error')
+            }
+        } catch (err) {
+            showToast(err.response?.data?.error || 'Request failed', 'error')
         }
     }
 
@@ -49,19 +46,18 @@ export default function AdminProductManager({ user }) {
 
     const handleDelete = async (id) => {
         if (!confirm('Delete this product?')) return
-        const res  = await fetch(`${API}/api/products/${id}?user_id=${user?.user_id}`, { method: 'DELETE' })
-        const data = await res.json()
-        if (!res.ok) {
-            const msg  = data.error || 'Delete failed'
+        try {
+            await API.delete(`/products/${id}`, { params: { user_id: user?.user_id } })
+            showToast('Product deleted', 'success')
+            load()
+        } catch (err) {
+            const msg  = err.response?.data?.error || 'Delete failed'
             const isFK = msg.includes('foreign key') || msg.includes('a referenced row')
             showToast(
                 isFK ? 'Cannot delete: this product is used in existing quotations.' : `Error: ${msg}`,
                 'error'
             )
-            return
         }
-        showToast('Product deleted', 'success')
-        load()
     }
 
     return (
