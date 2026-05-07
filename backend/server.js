@@ -5,6 +5,7 @@ import pool from './db.js';
 import { checkPermission } from './middleware/checkPermission.js';
 import retailerRoutes from './routes/retailers.js';
 import salesRoutes from './routes/sales.js';
+import agentRoutes from './routes/agents.js';
 
 const app = express();
 
@@ -18,6 +19,9 @@ app.use(cors({
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 }));
+
+app.use('/api/agents', agentRoutes);
+
 app.use(express.json());
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
