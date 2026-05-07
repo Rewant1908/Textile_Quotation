@@ -24,7 +24,6 @@ app.use(cors({
     credentials: true
 }));
 
-// ─── BODY PARSER — must be before all routes ──────────────────────────────────
 app.use(express.json());
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
@@ -33,7 +32,6 @@ app.use('/api/retailers', retailerRoutes);
 app.use('/api/transactions', salesRoutes);
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const phoneRegex = /^[0-9]{10}$/;
 const SALT_ROUNDS = 10;
 
 app.get('/api/health', async (req, res) => {
@@ -41,20 +39,10 @@ app.get('/api/health', async (req, res) => {
     try {
         conn = await pool.getConnection();
         const [db] = await conn.query('SELECT DATABASE() AS database_name');
-        res.json({
-            api: 'ok',
-            database: 'connected',
-            database_name: db?.database_name || null
-        });
+        res.json({ api: 'ok', database: 'connected', database_name: db?.database_name || null });
     } catch (err) {
-        res.status(503).json({
-            api: 'ok',
-            database: 'disconnected',
-            error: err.code || err.message
-        });
-    } finally {
-        if (conn) conn.release();
-    }
+        res.status(503).json({ api: 'ok', database: 'disconnected', error: err.code || err.message });
+    } finally { if (conn) conn.release(); }
 });
 
 // ─── AUTH: SIGNUP ─────────────────────────────────────────────────────────────
@@ -78,11 +66,8 @@ app.post('/api/signup', async (req, res) => {
             [username, password_hash, email || null, 'user']
         );
         res.status(201).json({ success: true, user_id: Number(result.insertId) });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 // ─── AUTH: LOGIN ──────────────────────────────────────────────────────────────
@@ -93,18 +78,14 @@ app.post('/api/login', async (req, res) => {
     try {
         conn = await pool.getConnection();
         const [user] = await conn.query(
-            'SELECT user_id, username, password, role FROM users WHERE username = ?',
-            [username]
+            'SELECT user_id, username, password, role FROM users WHERE username = ?', [username]
         );
         if (!user) return res.status(401).json({ error: 'Invalid username or password' });
         const match = await bcrypt.compare(password, user.password);
         if (!match) return res.status(401).json({ error: 'Invalid username or password' });
         res.json({ success: true, user_id: user.user_id, username: user.username, role: user.role });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 // ─── PRODUCTS ─────────────────────────────────────────────────────────────────
@@ -114,16 +95,14 @@ app.get('/api/products', async (req, res) => {
         conn = await pool.getConnection();
         const rows = await conn.query('SELECT product_id, product_name, category, base_price FROM products');
         res.json(rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 app.post('/api/products', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
     const { product_name, category, base_price } = req.body;
-    if (!product_name || !category || !base_price) return res.status(400).json({ error: 'All fields required' });
+    if (!product_name || !category || !base_price)
+        return res.status(400).json({ error: 'All fields required' });
     let conn;
     try {
         conn = await pool.getConnection();
@@ -132,11 +111,8 @@ app.post('/api/products', checkPermission('MANAGE_PRODUCTS'), async (req, res) =
             [product_name.trim(), category.trim(), base_price]
         );
         res.status(201).json({ success: true, product_id: Number(result.insertId) });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 app.put('/api/products/:id', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
@@ -149,11 +125,8 @@ app.put('/api/products/:id', checkPermission('MANAGE_PRODUCTS'), async (req, res
             [product_name, category, base_price, req.params.id]
         );
         res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 app.delete('/api/products/:id', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
@@ -162,11 +135,8 @@ app.delete('/api/products/:id', checkPermission('MANAGE_PRODUCTS'), async (req, 
         conn = await pool.getConnection();
         await conn.query('DELETE FROM products WHERE product_id = ?', [req.params.id]);
         res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 // ─── SUPPLIERS ────────────────────────────────────────────────────────────────
@@ -178,11 +148,8 @@ app.get('/api/suppliers', async (req, res) => {
             'SELECT supplier_id, supplier_name, factory_name FROM suppliers ORDER BY supplier_name'
         );
         res.json(rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 // ─── BALES ────────────────────────────────────────────────────────────────────
@@ -203,9 +170,7 @@ app.post('/api/bales', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
-        const [existing] = await conn.query(
-            'SELECT bale_id FROM bales WHERE bale_code = ?', [bale_code.trim()]
-        );
+        const [existing] = await conn.query('SELECT bale_id FROM bales WHERE bale_code = ?', [bale_code.trim()]);
         if (existing) return res.status(409).json({ error: 'Bale code already exists' });
 
         const result = await conn.query(
@@ -214,23 +179,14 @@ app.post('/api/bales', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
                  transport_cost, total_rolls, fabric_category, purchase_invoice, status)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'received')`,
             [
-                bale_code.trim(),
-                supplier_id || null,
-                factory_name?.trim() || null,
-                arrival_date,
-                Number(purchase_cost),
-                Number(transport_cost || 0),
-                Number(total_rolls),
-                fabric_category.trim(),
-                purchase_invoice?.trim() || null
+                bale_code.trim(), supplier_id || null, factory_name?.trim() || null,
+                arrival_date, Number(purchase_cost), Number(transport_cost || 0),
+                Number(total_rolls), fabric_category.trim(), purchase_invoice?.trim() || null
             ]
         );
         res.status(201).json({ success: true, bale_id: Number(result.insertId) });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 app.get('/api/bales', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
@@ -255,11 +211,8 @@ app.get('/api/bales', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
              ORDER BY b.arrival_date DESC, b.bale_id DESC`
         );
         res.json(rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 app.get('/api/bales/:id', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
@@ -279,11 +232,8 @@ app.get('/api/bales/:id', checkPermission('VIEW_OPERATIONS'), async (req, res) =
         );
         if (!bale) return res.status(404).json({ error: 'Bale not found' });
         res.json(bale);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 app.post('/api/bales/:id/thans', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
@@ -321,9 +271,7 @@ app.post('/api/bales/:id/thans', checkPermission('MANAGE_PRODUCTS'), async (req,
 
         const insertedIds = [];
         for (const t of thans) {
-            const [dup] = await conn.query(
-                'SELECT than_id FROM thans WHERE than_code = ?', [t.than_code.trim()]
-            );
+            const [dup] = await conn.query('SELECT than_id FROM thans WHERE than_code = ?', [t.than_code.trim()]);
             if (dup) {
                 await conn.rollback();
                 return res.status(409).json({ error: `than_code "${t.than_code}" already exists — rolled back` });
@@ -366,9 +314,7 @@ app.post('/api/bales/:id/thans', checkPermission('MANAGE_PRODUCTS'), async (req,
     } catch (err) {
         if (conn) await conn.rollback();
         res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } finally { if (conn) conn.release(); }
 });
 
 app.get('/api/bales/:id/thans', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
@@ -391,11 +337,8 @@ app.get('/api/bales/:id/thans', checkPermission('VIEW_OPERATIONS'), async (req, 
             [baleId]
         );
         res.json(rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 // ─── OPERATIONS DASHBOARD ─────────────────────────────────────────────────────
@@ -406,14 +349,15 @@ app.get('/api/operations/dashboard', checkPermission('VIEW_OPERATIONS'), async (
 
         const [summary] = await conn.query(
             `SELECT
-                COUNT(DISTINCT b.bale_id) AS total_bales,
-                COUNT(DISTINCT t.than_id) AS total_thans,
-                COALESCE(SUM(t.remaining_stock), 0) AS available_meters,
-                COALESCE(SUM(t.remaining_stock * t.cost_per_meter), 0) AS stock_cost_value,
-                COALESCE(SUM(t.remaining_stock * t.selling_price), 0) AS stock_retail_value,
-                COALESCE(SUM((t.selling_price - t.cost_per_meter) * t.remaining_stock), 0) AS unrealized_margin,
-                SUM(CASE WHEN t.movement_speed = 'dead' THEN 1 ELSE 0 END) AS dead_than_count,
-                COALESCE(SUM(CASE WHEN t.movement_speed = 'dead' THEN t.remaining_stock * t.cost_per_meter ELSE 0 END), 0) AS dead_stock_value
+                COUNT(DISTINCT b.bale_id)  AS total_bales,
+                COUNT(DISTINCT t.than_id)  AS total_thans,
+                COALESCE(SUM(t.remaining_stock), 0)                                           AS available_meters,
+                COALESCE(SUM(t.remaining_stock * t.cost_per_meter), 0)                        AS stock_cost_value,
+                COALESCE(SUM(t.remaining_stock * t.selling_price), 0)                         AS stock_retail_value,
+                COALESCE(SUM((t.selling_price - t.cost_per_meter) * t.remaining_stock), 0)    AS unrealized_margin,
+                SUM(CASE WHEN t.movement_speed = 'dead' THEN 1 ELSE 0 END)                    AS dead_than_count,
+                COALESCE(SUM(CASE WHEN t.movement_speed = 'dead'
+                    THEN t.remaining_stock * t.cost_per_meter ELSE 0 END), 0)                 AS dead_stock_value
              FROM thans t
              LEFT JOIN bales b ON t.bale_id = b.bale_id`
         );
@@ -421,10 +365,10 @@ app.get('/api/operations/dashboard', checkPermission('VIEW_OPERATIONS'), async (
         const categoryMovement = await conn.query(
             `SELECT
                 COALESCE(p.category, t.fabric_type) AS category,
-                COUNT(DISTINCT t.than_id) AS than_count,
-                COALESCE(SUM(t.remaining_stock), 0) AS remaining_meters,
-                COALESCE(SUM(tx.quantity), 0) AS sold_meters,
-                COALESCE(SUM(tx.margin), 0) AS realized_margin,
+                COUNT(DISTINCT t.than_id)            AS than_count,
+                COALESCE(SUM(t.remaining_stock), 0)  AS remaining_meters,
+                COALESCE(SUM(tx.quantity), 0)         AS sold_meters,
+                COALESCE(SUM(tx.margin), 0)           AS realized_margin,
                 ROUND(
                     COALESCE(SUM(tx.quantity), 0) /
                     NULLIF(COALESCE(SUM(tx.quantity), 0) + COALESCE(SUM(t.remaining_stock), 0), 0),
@@ -442,34 +386,56 @@ app.get('/api/operations/dashboard', checkPermission('VIEW_OPERATIONS'), async (
              LIMIT 8`
         );
 
+        // ── DEAD STOCK WATCHLIST (fixed) ──────────────────────────────────────
+        // idle days = days since the LATEST movement of ANY type (stock_in OR stock_out)
+        // This means a brand-new than that arrived 40 days ago and was never sold
+        // correctly shows 40 idle days, not NULL.
         const deadStock = await conn.query(
             `SELECT
-                t.than_id, t.than_code, t.fabric_type, t.color, t.design,
-                t.remaining_stock, t.selling_price, t.warehouse_location, t.movement_speed,
-                DATEDIFF(CURDATE(), DATE(COALESCE(MAX(im.movement_date), t.created_at))) AS days_without_movement
+                t.than_id,
+                t.than_code,
+                t.fabric_type,
+                t.color,
+                t.design,
+                t.remaining_stock,
+                t.cost_per_meter,
+                t.selling_price,
+                ROUND(t.remaining_stock * t.cost_per_meter, 2) AS cost_value,
+                t.warehouse_location,
+                t.movement_speed,
+                DATEDIFF(CURDATE(),
+                    DATE(COALESCE(
+                        MAX(im.movement_date),   -- last movement of any type
+                        t.created_at             -- fallback: when the than was created
+                    ))
+                ) AS days_without_movement
              FROM thans t
-             LEFT JOIN inventory_movements im
-                ON im.than_id = t.than_id AND im.movement_type = 'stock_out'
+             LEFT JOIN inventory_movements im ON im.than_id = t.than_id
              WHERE t.remaining_stock > 0
              GROUP BY
                 t.than_id, t.than_code, t.fabric_type, t.color, t.design,
-                t.remaining_stock, t.selling_price, t.warehouse_location,
-                t.movement_speed, t.created_at
+                t.remaining_stock, t.cost_per_meter, t.selling_price,
+                t.warehouse_location, t.movement_speed, t.created_at
              ORDER BY
-                CASE WHEN t.movement_speed = 'dead' THEN 0 ELSE 1 END,
+                CASE t.movement_speed
+                    WHEN 'dead' THEN 0
+                    WHEN 'slow' THEN 1
+                    WHEN 'new'  THEN 2
+                    ELSE 3
+                END,
                 days_without_movement DESC,
                 t.remaining_stock DESC
-             LIMIT 10`
+             LIMIT 15`
         );
 
         const retailerSignals = await conn.query(
             `SELECT
                 r.retailer_id, r.shop_name, r.market_location, r.payment_pattern,
                 r.preferred_categories, r.preferred_price_segment, r.outstanding_balance,
-                COUNT(tx.transaction_id) AS order_count,
-                COALESCE(SUM(tx.quantity), 0) AS meters_bought,
+                COUNT(tx.transaction_id)                           AS order_count,
+                COALESCE(SUM(tx.quantity), 0)                      AS meters_bought,
                 COALESCE(SUM(tx.price * tx.quantity - tx.discount), 0) AS revenue,
-                COALESCE(SUM(tx.margin), 0) AS margin
+                COALESCE(SUM(tx.margin), 0)                        AS margin
              FROM retailers r
              LEFT JOIN transactions tx ON r.retailer_id = tx.retailer_id
              GROUP BY
@@ -481,11 +447,12 @@ app.get('/api/operations/dashboard', checkPermission('VIEW_OPERATIONS'), async (
 
         const supplierSignals = await conn.query(
             `SELECT
-                s.supplier_id, s.supplier_name, s.quality_rating, s.delay_frequency, s.trend_alignment,
-                COUNT(DISTINCT b.bale_id) AS bales_received,
-                COUNT(DISTINCT t.than_id) AS thans_created,
+                s.supplier_id, s.supplier_name, s.quality_rating,
+                s.delay_frequency, s.trend_alignment,
+                COUNT(DISTINCT b.bale_id)    AS bales_received,
+                COUNT(DISTINCT t.than_id)    AS thans_created,
                 COALESCE(SUM(tx.quantity), 0) AS meters_sold,
-                COALESCE(SUM(tx.margin), 0) AS realized_margin
+                COALESCE(SUM(tx.margin), 0)   AS realized_margin
              FROM suppliers s
              LEFT JOIN bales b ON s.supplier_id = b.supplier_id
              LEFT JOIN thans t ON b.bale_id = t.bale_id
@@ -501,22 +468,20 @@ app.get('/api/operations/dashboard', checkPermission('VIEW_OPERATIONS'), async (
         res.json({ summary, categoryMovement, deadStock, retailerSignals, supplierSignals });
     } catch (err) {
         res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } finally { if (conn) conn.release(); }
 });
 
 // ─── INVENTORY SEARCH ─────────────────────────────────────────────────────────
 app.get('/api/inventory/search', async (req, res) => {
-    const q = String(req.query.q || '').trim();
+    const q        = String(req.query.q || '').trim();
     const maxPrice = req.query.max_price ? Number(req.query.max_price) : null;
-    const params = [];
-    const clauses = ['t.remaining_stock > 0'];
+    const params   = [];
+    const clauses  = ['t.remaining_stock > 0'];
 
     if (q) {
         clauses.push(`(
-            t.than_code LIKE ? OR t.fabric_type LIKE ? OR t.color LIKE ?
-            OR t.design LIKE ? OR COALESCE(p.category, '') LIKE ?
+            t.than_code        LIKE ? OR t.fabric_type LIKE ? OR t.color LIKE ?
+            OR t.design        LIKE ? OR COALESCE(p.category, '') LIKE ?
             OR t.warehouse_location LIKE ?
         )`);
         const like = `%${q}%`;
@@ -539,16 +504,58 @@ app.get('/api/inventory/search', async (req, res) => {
              FROM thans t
              LEFT JOIN products p ON t.product_id = p.product_id
              WHERE ${clauses.join(' AND ')}
-             ORDER BY t.movement_speed DESC, t.remaining_stock DESC
+             ORDER BY
+                CASE t.movement_speed
+                    WHEN 'fast'   THEN 0
+                    WHEN 'medium' THEN 1
+                    WHEN 'slow'   THEN 2
+                    WHEN 'new'    THEN 3
+                    WHEN 'dead'   THEN 4
+                END,
+                t.remaining_stock DESC
              LIMIT 100`,
             params
         );
         res.json(rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    } finally {
-        if (conn) conn.release();
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
+});
+
+// ─── BATCH movement_speed RECALCULATION (run once to fix existing data) ───────
+// POST /api/admin/recalculate-speeds
+// Useful to backfill movement_speed for all existing thans after this deploy.
+app.post('/api/admin/recalculate-speeds', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        const thans = await conn.query(
+            `SELECT t.than_id, t.remaining_stock,
+                    DATEDIFF(CURDATE(), DATE(COALESCE(MAX(im.movement_date), t.created_at))) AS idle_days,
+                    (SELECT COUNT(*) FROM inventory_movements
+                     WHERE than_id = t.than_id AND movement_type = 'stock_out') AS sale_count
+             FROM thans t
+             LEFT JOIN inventory_movements im ON im.than_id = t.than_id
+             WHERE t.remaining_stock > 0
+             GROUP BY t.than_id, t.remaining_stock, t.created_at`
+        );
+
+        let updated = 0;
+        for (const row of thans) {
+            const idle = Number(row.idle_days || 0);
+            const sales = Number(row.sale_count || 0);
+            let speed;
+            if (sales === 0)           speed = 'new';
+            else if (idle >= 60)       speed = 'dead';
+            else if (idle >= 30)       speed = 'slow';
+            else if (idle >= 8)        speed = 'medium';
+            else                        speed = 'fast';
+
+            await conn.query('UPDATE thans SET movement_speed = ? WHERE than_id = ?', [speed, row.than_id]);
+            updated++;
+        }
+        res.json({ success: true, updated });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
 });
 
 const PORT = process.env.PORT || 5000;

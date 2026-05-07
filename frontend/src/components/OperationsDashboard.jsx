@@ -1,23 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import API from '../api'
 
-const money = (value) => `NPR ${Number(value || 0).toLocaleString('en-IN', {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2
-})}`
+const money  = (v) => `NPR ${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`
+const meters = (v) => `${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })} m`
 
-const meters = (value) => `${Number(value || 0).toLocaleString('en-IN', {
-    maximumFractionDigits: 2
-})} m`
+// Colour threshold for idle-days badge
+function idlePillClass(days, speed) {
+    if (speed === 'dead' || Number(days) >= 60) return 'mini-pill danger'
+    if (Number(days) >= 30)                     return 'mini-pill warning'
+    return 'mini-pill'
+}
+
+// Human-readable speed label
+const speedLabel = { new: 'New', slow: 'Slow', medium: 'Mid', fast: 'Fast', dead: 'Dead' }
 
 export default function OperationsDashboard({ user }) {
-    const [dashboard, setDashboard] = useState(null)
-    const [inventory, setInventory] = useState([])
-    const [query, setQuery] = useState('')
-    const [maxPrice, setMaxPrice] = useState('')
-    const [loading, setLoading] = useState(true)
-    const [searching, setSearching] = useState(false)
-    const [toast, setToast] = useState(null)
+    const [dashboard,  setDashboard]  = useState(null)
+    const [inventory,  setInventory]  = useState([])
+    const [query,      setQuery]      = useState('')
+    const [maxPrice,   setMaxPrice]   = useState('')
+    const [loading,    setLoading]    = useState(true)
+    const [searching,  setSearching]  = useState(false)
+    const [searchDone, setSearchDone] = useState(false)
+    const [toast,      setToast]      = useState(null)
 
     const authHeader = useCallback(
         () => ({ 'x-user-id': String(user.user_id), 'x-user-role': user.role }),
@@ -35,159 +40,204 @@ export default function OperationsDashboard({ user }) {
             const res = await API.get('/operations/dashboard', { headers: authHeader() })
             setDashboard(res.data)
         } catch (err) {
-            showToast(err?.response?.data?.error || err.message || 'Could not load operations dashboard', 'error')
+            showToast(err?.response?.data?.error || err.message || 'Could not load dashboard', 'error')
         } finally {
             setLoading(false)
         }
     }, [authHeader])
 
+    // Search — auth header required
     const searchInventory = useCallback(async () => {
         setSearching(true)
         const params = {}
         if (query.trim()) params.q = query.trim()
-        if (maxPrice) params.max_price = maxPrice
+        if (maxPrice)     params.max_price = maxPrice
         try {
-            const res = await API.get('/inventory/search', { params })
+            const res = await API.get('/inventory/search', { params, headers: authHeader() })
             setInventory(Array.isArray(res.data) ? res.data : [])
+            setSearchDone(true)
         } catch (err) {
-            showToast(err?.response?.data?.error || err.message || 'Could not search inventory', 'error')
+            showToast(err?.response?.data?.error || err.message || 'Search failed', 'error')
         } finally {
             setSearching(false)
         }
-    }, [query, maxPrice])
+    }, [query, maxPrice, authHeader])
 
     useEffect(() => { loadDashboard() }, [loadDashboard])
-    useEffect(() => { searchInventory() }, [searchInventory])
 
-    const summary = useMemo(() => dashboard?.summary || {}, [dashboard])
+    const summary   = useMemo(() => dashboard?.summary || {}, [dashboard])
     const riskRatio = useMemo(() => {
-        const stockValue = Number(summary.stock_cost_value || 0)
-        if (!stockValue) return 0
-        return Math.round((Number(summary.dead_stock_value || 0) / stockValue) * 100)
+        const total = Number(summary.stock_cost_value || 0)
+        if (!total) return 0
+        return Math.round((Number(summary.dead_stock_value || 0) / total) * 100)
     }, [summary])
 
-    if (loading) return <div className="loading">Loading operations dashboard...</div>
+    const riskClass = riskRatio >= 20 ? 'risk-high' : riskRatio >= 10 ? 'risk-mid' : 'risk-low'
+
+    if (loading) return <div className="loading">Loading operations dashboard…</div>
 
     return (
         <div className="ops-page">
             {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
 
+            {/* ── Hero ──────────────────────────────────────────────────────── */}
             <section className="card ops-hero">
                 <div>
                     <p className="eyebrow">Wholesale intelligence</p>
                     <h2>Inventory Operating System</h2>
                     <p>
-                        Bale-to-Than visibility, retailer memory, stock movement, margin signals,
-                        and procurement intelligence in one operating view.
+                        Bale-to-Than visibility, retailer memory, stock movement,
+                        margin signals, and procurement intelligence in one operating view.
                     </p>
                 </div>
-                <div className="ops-risk">
+                <div className={`ops-risk ${riskClass}`}>
                     <span>Dead stock risk</span>
                     <strong>{riskRatio}%</strong>
                     <small>{money(summary.dead_stock_value)} blocked cost value</small>
+                    <small>{summary.dead_than_count || 0} than(s) flagged dead</small>
                 </div>
             </section>
 
+            {/* ── Metric strip ──────────────────────────────────────────────── */}
             <section className="metric-grid">
-                <Metric label="Bales" value={summary.total_bales || 0} />
-                <Metric label="Thans" value={summary.total_thans || 0} />
+                <Metric label="Bales"            value={summary.total_bales || 0} />
+                <Metric label="Thans"            value={summary.total_thans || 0} />
                 <Metric label="Available Meters" value={meters(summary.available_meters)} />
-                <Metric label="Stock Cost" value={money(summary.stock_cost_value)} />
-                <Metric label="Retail Value" value={money(summary.stock_retail_value)} />
+                <Metric label="Stock Cost"        value={money(summary.stock_cost_value)} />
+                <Metric label="Retail Value"      value={money(summary.stock_retail_value)} />
                 <Metric label="Unrealized Margin" value={money(summary.unrealized_margin)} />
             </section>
 
+            {/* ── Category + Supplier ───────────────────────────────────────── */}
             <section className="ops-grid two">
                 <Panel title="Category Movement">
-                    <table>
-                        <thead>
-                            <tr><th>Category</th><th>Sold</th><th>Remaining</th><th>Sell Through</th><th>Margin</th></tr>
-                        </thead>
-                        <tbody>
-                            {dashboard?.categoryMovement?.map(row => (
-                                <tr key={row.category}>
-                                    <td>{row.category}</td>
-                                    <td>{meters(row.sold_meters)}</td>
-                                    <td>{meters(row.remaining_meters)}</td>
-                                    <td>{Math.round(Number(row.sell_through_rate || 0) * 100)}%</td>
-                                    <td className="price-accent">{money(row.realized_margin)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    {dashboard?.categoryMovement?.length ? (
+                        <table>
+                            <thead>
+                                <tr><th>Category</th><th>Sold</th><th>Remaining</th><th>Sell-Through</th><th>Margin</th></tr>
+                            </thead>
+                            <tbody>
+                                {dashboard.categoryMovement.map(row => (
+                                    <tr key={row.category}>
+                                        <td>{row.category}</td>
+                                        <td>{meters(row.sold_meters)}</td>
+                                        <td>{meters(row.remaining_meters)}</td>
+                                        <td>{Math.round(Number(row.sell_through_rate || 0) * 100)}%</td>
+                                        <td className="price-accent">{money(row.realized_margin)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : <p className="empty-state">No category data yet. Add thans to see movement.</p>}
                 </Panel>
 
                 <Panel title="Supplier Signals">
-                    <table>
-                        <thead>
-                            <tr><th>Supplier</th><th>Quality</th><th>Delay</th><th>Sold</th><th>Margin</th></tr>
-                        </thead>
-                        <tbody>
-                            {dashboard?.supplierSignals?.map(row => (
-                                <tr key={row.supplier_id}>
-                                    <td>{row.supplier_name}</td>
-                                    <td>{Number(row.quality_rating || 0).toFixed(1)}/5</td>
-                                    <td><span className="mini-pill">{row.delay_frequency}</span></td>
-                                    <td>{meters(row.meters_sold)}</td>
-                                    <td className="price-accent">{money(row.realized_margin)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    {dashboard?.supplierSignals?.length ? (
+                        <table>
+                            <thead>
+                                <tr><th>Supplier</th><th>Quality</th><th>Delay</th><th>Sold</th><th>Margin</th></tr>
+                            </thead>
+                            <tbody>
+                                {dashboard.supplierSignals.map(row => (
+                                    <tr key={row.supplier_id}>
+                                        <td>{row.supplier_name}</td>
+                                        <td>{Number(row.quality_rating || 0).toFixed(1)}/5</td>
+                                        <td><span className="mini-pill">{row.delay_frequency}</span></td>
+                                        <td>{meters(row.meters_sold)}</td>
+                                        <td className="price-accent">{money(row.realized_margin)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : <p className="empty-state">No suppliers linked yet.</p>}
                 </Panel>
             </section>
 
+            {/* ── Dead Stock + Retailer Memory ─────────────────────────────── */}
             <section className="ops-grid two">
                 <Panel title="Dead Stock Watchlist">
-                    <table>
-                        <thead>
-                            <tr><th>Than</th><th>Fabric</th><th>Stock</th><th>Location</th><th>Idle Days</th></tr>
-                        </thead>
-                        <tbody>
-                            {dashboard?.deadStock?.map(row => (
-                                <tr key={row.than_id}>
-                                    <td>{row.than_code}</td>
-                                    <td>{[row.color, row.design, row.fabric_type].filter(Boolean).join(' / ')}</td>
-                                    <td>{meters(row.remaining_stock)}</td>
-                                    <td>{row.warehouse_location || '-'}</td>
-                                    <td><span className={`mini-pill ${row.movement_speed === 'dead' ? 'danger' : ''}`}>{row.days_without_movement}</span></td>
+                    {dashboard?.deadStock?.length ? (
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Than</th>
+                                    <th>Fabric</th>
+                                    <th>Stock</th>
+                                    <th>Cost Value</th>
+                                    <th>Location</th>
+                                    <th>Speed</th>
+                                    <th>Idle Days</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {dashboard.deadStock.map(row => (
+                                    <tr key={row.than_id}>
+                                        <td>{row.than_code}</td>
+                                        <td>{[row.color, row.design, row.fabric_type].filter(Boolean).join(' / ')}</td>
+                                        <td>{meters(row.remaining_stock)}</td>
+                                        <td className="price-accent">{money(row.cost_value)}</td>
+                                        <td>{row.warehouse_location || '—'}</td>
+                                        <td>
+                                            <span className={`mini-pill ${
+                                                row.movement_speed === 'dead' ? 'danger'
+                                                : row.movement_speed === 'slow' ? 'warning' : ''
+                                            }`}>
+                                                {speedLabel[row.movement_speed] || row.movement_speed}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span className={idlePillClass(row.days_without_movement, row.movement_speed)}>
+                                                {row.days_without_movement ?? '—'}d
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : (
+                        <p className="empty-state">
+                            ✅ No dead or slow stock detected. All thans are moving.
+                        </p>
+                    )}
                 </Panel>
 
                 <Panel title="Retailer Memory">
-                    <table>
-                        <thead>
-                            <tr><th>Retailer</th><th>Prefers</th><th>Payment</th><th>Revenue</th><th>Balance</th></tr>
-                        </thead>
-                        <tbody>
-                            {dashboard?.retailerSignals?.map(row => (
-                                <tr key={row.retailer_id}>
-                                    <td>{row.shop_name}<br /><small>{row.market_location || '-'}</small></td>
-                                    <td>{row.preferred_categories || '-'}</td>
-                                    <td><span className="mini-pill">{row.payment_pattern}</span></td>
-                                    <td>{money(row.revenue)}</td>
-                                    <td className={Number(row.outstanding_balance) > 0 ? 'risk-text' : ''}>{money(row.outstanding_balance)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    {dashboard?.retailerSignals?.length ? (
+                        <table>
+                            <thead>
+                                <tr><th>Retailer</th><th>Prefers</th><th>Payment</th><th>Revenue</th><th>Balance</th></tr>
+                            </thead>
+                            <tbody>
+                                {dashboard.retailerSignals.map(row => (
+                                    <tr key={row.retailer_id}>
+                                        <td>{row.shop_name}<br /><small>{row.market_location || '—'}</small></td>
+                                        <td>{row.preferred_categories || '—'}</td>
+                                        <td><span className="mini-pill">{row.payment_pattern}</span></td>
+                                        <td>{money(row.revenue)}</td>
+                                        <td className={Number(row.outstanding_balance) > 0 ? 'risk-text' : ''}>
+                                            {money(row.outstanding_balance)}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : <p className="empty-state">No retailers added yet.</p>}
                 </Panel>
             </section>
 
+            {/* ── Inventory Search ─────────────────────────────────────────── */}
             <section className="card">
                 <div className="section-heading inline">
                     <div>
                         <h2>Inventory Search</h2>
-                        <p className="muted-copy">Search fabric, color, design, category, code, or warehouse location.</p>
+                        <p className="muted-copy">Search by fabric, colour, design, category, than code, or warehouse location.</p>
                     </div>
                 </div>
                 <div className="search-row">
                     <input
                         value={query}
                         onChange={e => setQuery(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && searchInventory()}
                         placeholder="e.g. black floral cotton"
                     />
                     <input
@@ -198,28 +248,46 @@ export default function OperationsDashboard({ user }) {
                         placeholder="Max price/m"
                     />
                     <button className="btn btn-primary" onClick={searchInventory} disabled={searching}>
-                        {searching ? 'Searching...' : 'Search'}
+                        {searching ? 'Searching…' : 'Search'}
                     </button>
                 </div>
-                <table>
-                    <thead>
-                        <tr><th>Than</th><th>Fabric</th><th>Stock</th><th>Price</th><th>Margin/m</th><th>Location</th><th>Speed</th></tr>
-                    </thead>
-                    <tbody>
-                        {inventory.map(row => (
-                            <tr key={row.than_id}>
-                                <td>{row.than_code}</td>
-                                <td>{[row.color, row.design, row.fabric_type].filter(Boolean).join(' / ')}</td>
-                                <td>{meters(row.remaining_stock)}</td>
-                                <td>{money(row.selling_price)}</td>
-                                <td className="price-accent">{money(row.margin_per_meter)}</td>
-                                <td>{row.warehouse_location || '-'}</td>
-                                <td><span className="mini-pill">{row.movement_speed}</span></td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-                {inventory.length === 0 && <p className="empty-state">No matching Thans found.</p>}
+
+                {searchDone && (
+                    inventory.length ? (
+                        <table>
+                            <thead>
+                                <tr><th>Than</th><th>Fabric</th><th>Stock</th><th>Price/m</th><th>Margin/m</th><th>Location</th><th>Speed</th></tr>
+                            </thead>
+                            <tbody>
+                                {inventory.map(row => (
+                                    <tr key={row.than_id}>
+                                        <td>{row.than_code}</td>
+                                        <td>{[row.color, row.design, row.fabric_type].filter(Boolean).join(' / ')}</td>
+                                        <td>{meters(row.remaining_stock)}</td>
+                                        <td>{money(row.selling_price)}</td>
+                                        <td className="price-accent">{money(row.margin_per_meter)}</td>
+                                        <td>{row.warehouse_location || '—'}</td>
+                                        <td>
+                                            <span className={`mini-pill ${
+                                                row.movement_speed === 'dead' ? 'danger'
+                                                : row.movement_speed === 'slow' ? 'warning' : ''
+                                            }`}>
+                                                {speedLabel[row.movement_speed] || row.movement_speed}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : (
+                        <p className="empty-state">No matching thans found.</p>
+                    )
+                )}
+                {!searchDone && (
+                    <p className="muted-copy" style={{ marginTop: '0.75rem' }}>
+                        Enter a term above and press Search.
+                    </p>
+                )}
             </section>
         </div>
     )
