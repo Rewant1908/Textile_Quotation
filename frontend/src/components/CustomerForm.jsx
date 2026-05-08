@@ -2,7 +2,7 @@ import { useState } from 'react'
 import API from '../api'
 
 export default function CustomerForm() {
-    const [form, setForm] = useState({ customer_name: '', contact_phone: '', email: '' })
+    const [form, setForm] = useState({ shop_name: '', phone: '', email: '' })
     const [toast, setToast] = useState(null)
     const [loading, setLoading] = useState(false)
 
@@ -13,22 +13,28 @@ export default function CustomerForm() {
 
     const handleSubmit = async (e) => {
         e.preventDefault()
-        if (!form.customer_name.trim()) return showToast('Customer name is required.', 'error')
+        if (!form.shop_name.trim()) return showToast('Dealer / Firm name is required.', 'error')
         setLoading(true)
         try {
-            // Bug 1 fix: was fetch(`${API}/api/enquiry`) — API is an axios instance,
-            // so template literal produced "[object Object]/api/enquiry".
-            // Migrated to API.post() so baseURL from api.js is used correctly.
-            const res = await API.post('/enquiry', form)
+            const res = await API.post('/retailers', {
+                shop_name:    form.shop_name.trim(),
+                phone:        form.phone.trim() || null,
+                contact_person: null,
+                market_location: null,
+                notes:        form.email.trim() ? `Email: ${form.email.trim()}` : null,
+            })
             const data = res.data
             if (data.success) {
-                showToast(`Customer registered! ID: ${data.customer_id}`, 'success')
-                setForm({ customer_name: '', contact_phone: '', email: '' })
+                showToast(`Dealer registered! ID: ${data.retailer_id}`, 'success')
+                setForm({ shop_name: '', phone: '', email: '' })
             } else {
                 showToast(data.error || 'Something went wrong.', 'error')
             }
         } catch (err) {
-            showToast(err?.response?.data?.error || 'Could not connect to server.', 'error')
+            const msg = err?.response?.data?.error
+            if (err?.response?.status === 401) return showToast('Session expired — please log in again.', 'error')
+            if (err?.response?.status === 403) return showToast('You do not have permission to register dealers.', 'error')
+            showToast(msg || 'Could not connect to server.', 'error')
         }
         setLoading(false)
     }
@@ -44,8 +50,8 @@ export default function CustomerForm() {
                         <input
                             type="text"
                             placeholder="e.g. Rajesh Textiles"
-                            value={form.customer_name}
-                            onChange={e => setForm({ ...form, customer_name: e.target.value })}
+                            value={form.shop_name}
+                            onChange={e => setForm({ ...form, shop_name: e.target.value })}
                         />
                     </div>
                     <div className="form-group">
@@ -53,8 +59,8 @@ export default function CustomerForm() {
                         <input
                             type="text"
                             placeholder="e.g. 9876543210"
-                            value={form.contact_phone}
-                            onChange={e => setForm({ ...form, contact_phone: e.target.value })}
+                            value={form.phone}
+                            onChange={e => setForm({ ...form, phone: e.target.value })}
                         />
                     </div>
                     <div className="form-group">
