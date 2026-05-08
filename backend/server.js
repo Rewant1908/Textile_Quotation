@@ -54,15 +54,27 @@ app.use(cors({
 app.use(express.json());
 
 // ─── MOUNT ROUTES ─────────────────────────────────────────────────────────────
+//
+// operationsRoutes has paths: /dashboard, /thans, /inventory/search, /admin/recalculate-speeds
+//
+// Frontend calls:
+//   GET /api/operations/dashboard   ← needs mount at /api/operations
+//   GET /api/thans                  ← needs mount at /api
+//   GET /api/inventory/search       ← needs mount at /api
+//   POST /api/admin/recalculate-speeds ← needs mount at /api
+//
+// Mount TWICE so all paths resolve correctly.
+//
 app.use('/api',              authRoutes);        // POST /api/signup, POST /api/login
 app.use('/api/products',     productRoutes);     // CRUD /api/products
 app.use('/api/suppliers',    supplierRoutes);    // GET  /api/suppliers
 app.use('/api/bales',        baleRoutes);        // CRUD /api/bales + /api/bales/:id/thans
-app.use('/api',              operationsRoutes);  // GET  /api/thans, /api/operations/dashboard, /api/inventory/search
+app.use('/api/operations',   operationsRoutes);  // GET  /api/operations/dashboard  ← FIX
+app.use('/api',              operationsRoutes);  // GET  /api/thans, /api/inventory/search, POST /api/admin/*
 app.use('/api/retailers',    retailerRoutes);    // CRUD /api/retailers
 app.use('/api/transactions',  salesRoutes);      // CRUD /api/transactions
 app.use('/api/agents',       agentRoutes);       // POST /api/agents/query, /api/agents/procurement
-app.use('/api/analytics',    analyticsRoutes);   // GET  /api/analytics/top-retailers, margin-per-supplier, margin-per-retailer, bale-performance
+app.use('/api/analytics',    analyticsRoutes);   // GET  /api/analytics/*
 
 // ─── HEALTH ───────────────────────────────────────────────────────────────────
 app.get('/api/health', async (req, res) => {
