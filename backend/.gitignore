@@ -1,4 +1,6 @@
 node_modules/
 .env
-dist/
-*.log
+
+# Agent memory — user and local scopes are machine-specific, not committed
+memory/users/
+memory/local/

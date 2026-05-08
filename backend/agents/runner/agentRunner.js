@@ -1,123 +1,106 @@
+// agentRunner.js — Core agent lifecycle
+// Phase 4: Technical Foundation
+// Uses Google Gemini (free tier) instead of Anthropic.
+
+import { GoogleGenerativeAI } from '@google/generative-ai'
+import { readFile }           from 'fs/promises'
+import { resolve }            from 'path'
+import { readMemory, writeMemorySnapshot } from './agentMemory.js'
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+
+const AGENTS_DIR = resolve(import.meta.dirname, '..')
+
 /**
- * agentRunner.js
- * Core agent lifecycle: load definition → init memory → build prompt → run loop → finalize
- * Mirrors the runAgent.ts pattern from Claude Code's agent subsystem.
+ * Load and parse an agent .md file.
+ * Frontmatter is a YAML-like block at the top between --- markers.
+ * Returns { name, model, maxTurns, memoryScope, systemPrompt }
  */
+async function loadAgentDefinition(agentName) {
+    const filePath = resolve(AGENTS_DIR, `${agentName}.agent.md`)
+    const raw = await readFile(filePath, 'utf-8')
 
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { readMemory, writeMemorySnapshot } from './agentMemory.js';
+    const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
+    let meta = {}
+    let systemPrompt = raw
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const AGENTS_DIR = path.join(__dirname, '..');
+    if (fmMatch) {
+        const fmLines = fmMatch[1].split('\n')
+        for (const line of fmLines) {
+            const [key, ...rest] = line.split(':')
+            if (key && rest.length) meta[key.trim()] = rest.join(':').trim()
+        }
+        systemPrompt = fmMatch[2].trim()
+    }
 
-/**
- * Load and parse an agent .md definition file.
- * Extracts YAML frontmatter and system prompt body.
- */
-export async function loadAgentDefinition(agentName) {
-  const filePath = path.join(AGENTS_DIR, `${agentName}.agent.md`);
-  const raw = await fs.readFile(filePath, 'utf8');
-
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---/);
-  if (!fmMatch) throw new Error(`No frontmatter found in ${agentName}.agent.md`);
-
-  // Simple YAML key:value parser (no external dep required)
-  const frontmatter = {};
-  for (const line of fmMatch[1].split('\n')) {
-    const kv = line.match(/^([\w]+):\s*(.*)$/);
-    if (kv) frontmatter[kv[1].trim()] = kv[2].trim();
-  }
-
-  const systemPrompt = raw.replace(/^---[\s\S]*?---/, '').replace(/^## System Prompt\n/, '').trim();
-
-  return { name: agentName, frontmatter, systemPrompt };
+    return {
+        name:        meta.name        || agentName,
+        model:       meta.model       || process.env.AGENT_MODEL || 'gemini-2.0-flash',
+        maxTurns:    parseInt(meta.maxTurns || '3', 10),
+        memoryScope: meta.memoryScope || 'project',
+        systemPrompt,
+    }
 }
 
 /**
- * Main agent runner.
- * Lifecycle:
- *   1. Load agent definition
- *   2. Load memory from MEMORY.md (project/user/local scope)
- *   3. Build full system prompt (definition + memory context)
- *   4. Execute query via AI provider
- *   5. Finalize — write memory snapshot if updated
+ * runAgent(agentName, query, context?, username?)
  *
- * @param {string} agentName   - e.g. 'inventory', 'retailer'
- * @param {string} userQuery   - natural language query
- * @param {object} dbPool      - MariaDB connection pool
- * @param {object} [options]   - { retailerId, userId, maxTurns }
- * @returns {Promise<{verdict: string, fullResponse: string, agentName: string}>}
+ * Full lifecycle:
+ * 1. Load agent definition
+ * 2. Load memory for scope
+ * 3. Build system prompt = definition + memory
+ * 4. Call Gemini API
+ * 5. Extract VERDICT block
+ * 6. Optionally persist memory update
+ * 7. Return structured result
  */
-export async function runAgent(agentName, userQuery, dbPool, options = {}) {
-  const startTime = Date.now();
+export async function runAgent({ agentName, query, context = '', username = 'system' }) {
+    const start = Date.now()
 
-  // ── Step 1: Load agent definition ────────────────────────────────────────
-  const agent = await loadAgentDefinition(agentName);
-  const maxTurns = options.maxTurns || parseInt(agent.frontmatter.maxTurns) || 5;
+    // 1. Load agent definition
+    const agent = await loadAgentDefinition(agentName)
 
-  // ── Step 2: Load memory ───────────────────────────────────────────────────
-  const memoryScope = agent.frontmatter['memory.scope'] || 'project';
-  const memoryFile  = agent.frontmatter['memory.file']  || `memory/${agentName}.MEMORY.md`;
-  const memoryContent = await readMemory(memoryFile, memoryScope);
+    // 2. Load memory
+    const memory = await readMemory(agent.memoryScope, agentName, username)
 
-  // ── Step 3: Build system prompt ───────────────────────────────────────────
-  const fullSystemPrompt = [
-    agent.systemPrompt,
-    memoryContent ? `\n\n## Loaded Memory\n${memoryContent}` : ''
-  ].join('');
+    // 3. Build full system prompt
+    const fullSystemPrompt = [
+        agent.systemPrompt,
+        memory  ? `\n\n## Agent Memory\n${memory}`       : '',
+        context ? `\n\n## Query Context\n${context}`     : '',
+    ].join('')
 
-  // ── Step 4: Build context for AI provider ─────────────────────────────────
-  // This is the hook point for Claude / OpenAI API calls.
-  // Replace the stub below with your actual AI provider call.
-  const aiResponse = await callAIProvider({
-    systemPrompt: fullSystemPrompt,
-    userQuery,
-    maxTurns,
-    agentName: agent.name
-  });
+    // 4. Call Gemini
+    const model = genAI.getGenerativeModel({
+        model:             agent.model,
+        systemInstruction: fullSystemPrompt,
+    })
 
-  // ── Step 5: Extract structured verdict ───────────────────────────────────
-  const verdict = extractVerdict(aiResponse);
+    const result       = await model.generateContent(query)
+    const fullResponse = result.response.text()
 
-  // ── Step 6: Finalize — persist memory if agent wrote updates ─────────────
-  if (aiResponse.memoryUpdates) {
-    await writeMemorySnapshot(memoryFile, memoryScope, aiResponse.memoryUpdates);
-  }
+    // 5. Extract VERDICT block
+    const verdictMatch =
+        fullResponse.match(/^(VERDICT[^\n]*)/m)           ||
+        fullResponse.match(/^(RETAILER SIGNAL[^\n]*)/m)   ||
+        fullResponse.match(/^(PROCUREMENT VERDICT[^\n]*)/m) ||
+        fullResponse.match(/^(PRICING VERDICT[^\n]*)/m)   ||
+        fullResponse.match(/^(RETRIEVAL[^\n]*)/m)
+    const verdict = verdictMatch ? verdictMatch[1].trim() : null
 
-  return {
-    agentName,
-    verdict,
-    fullResponse: aiResponse.text,
-    durationMs: Date.now() - startTime
-  };
-}
+    // 6. Persist memory if agent signals an update
+    if (fullResponse.includes('MEMORY_UPDATE:')) {
+        const memUpdateMatch = fullResponse.match(/MEMORY_UPDATE:\s*([\s\S]*?)(?:\n\n|$)/)
+        if (memUpdateMatch) {
+            await writeMemorySnapshot(agent.memoryScope, agentName, username, memUpdateMatch[1].trim())
+        }
+    }
 
-/**
- * Extract the VERDICT block from an agent response.
- * Agents are instructed to end responses with a VERDICT: line.
- */
-function extractVerdict(aiResponse) {
-  const text = aiResponse.text || '';
-  const match = text.match(/VERDICT[:\s]+([^\n]+(?:\n(?!\n)[^\n]+)*)/i);
-  return match ? match[0].trim() : 'No verdict produced';
-}
-
-/**
- * AI provider stub — replace with actual Claude / OpenAI SDK call.
- * Signature must return { text: string, memoryUpdates?: string }
- */
-async function callAIProvider({ systemPrompt, userQuery, maxTurns, agentName }) {
-  // TODO: replace stub with:
-  //   import Anthropic from '@anthropic-ai/sdk';
-  //   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  //   const msg = await client.messages.create({ model: 'claude-opus-4-5', max_tokens: 2048,
-  //     system: systemPrompt, messages: [{ role: 'user', content: userQuery }] });
-  //   return { text: msg.content[0].text };
-
-  console.log(`[AgentRunner] ${agentName} called | maxTurns=${maxTurns}`);
-  return {
-    text: `[STUB] ${agentName} received: "${userQuery}"\nVERDICT: Stub response — connect AI provider to activate`
-  };
+    return {
+        agentName,
+        verdict,
+        fullResponse,
+        durationMs: Date.now() - start,
+        model:      agent.model,
+    }
 }
