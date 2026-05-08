@@ -219,11 +219,11 @@ async function _warehouseContext(db) {
     `)
 
     const recentMovements = await db.query(`
-        SELECT im.movement_type, im.quantity_change,
-               t.fabric_type, t.color, im.notes, im.created_at
+        SELECT im.movement_type, im.quantity,
+               t.fabric_type, t.color, im.notes, im.movement_date
         FROM inventory_movements im
         JOIN thans t ON im.than_id = t.than_id
-        ORDER BY im.created_at DESC
+        ORDER BY im.movement_date DESC
         LIMIT 20
     `)
 
@@ -238,7 +238,7 @@ async function _warehouseContext(db) {
         '',
         '### Recent Inventory Movements (last 20)',
         ...recentMovements.map(r =>
-            `- [${_dateStr(r.created_at)}] ${r.movement_type} | ${r.fabric_type} ${r.color} | qty: ${r.quantity_change} | ${r.notes || ''}`
+            `- [${_dateStr(r.movement_date)}] ${r.movement_type} | ${r.fabric_type} ${r.color} | qty: ${r.quantity} | ${r.notes || ''}`
         ),
     ]
     return lines.join('\n')
@@ -320,7 +320,7 @@ async function _salesContext(db) {
     `)
 
     const pendingQuotes = await db.query(`
-        SELECT q.quotation_number, c.name AS customer_name,
+        SELECT q.quotation_number, c.customer_name,
                q.total_amount, q.status, q.valid_until, q.created_at
         FROM quotations q
         JOIN customers c ON q.customer_id = c.customer_id
