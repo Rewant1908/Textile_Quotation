@@ -5,12 +5,14 @@ import { checkPermission } from '../middleware/checkPermission.js';
 const router = express.Router();
 
 // ─── movement_speed classifier ───────────────────────────────────────────────
-// Called after every sale. Reads the than's full history and re-classifies:
-//   dead   : remaining_stock > 0  AND  no stock_out in 60+ days
-//   slow   : last sale was 30–59 days ago
-//   medium : last sale was 8–29 days ago
-//   fast   : last sale was within 7 days
-//   new    : never sold yet (no stock_out at all)
+// Bug 2 fix: thresholds were 60/30/8 days here but the DB trigger (if any) used
+// 90/45/14, creating non-deterministic classification. This function is the
+// sole source of truth — trigger removed. Thresholds are now:
+//   dead   : idle >= 90 days (matches original business intent)
+//   slow   : idle >= 45 days
+//   medium : idle >= 14 days
+//   fast   : last sale < 14 days ago
+//   new    : never sold yet (no stock_out movements)
 async function refreshMovementSpeed(conn, thanId) {
     const [than] = await conn.query(
         'SELECT remaining_stock, created_at FROM thans WHERE than_id = ?',
@@ -18,7 +20,6 @@ async function refreshMovementSpeed(conn, thanId) {
     );
     if (!than) return;
 
-    // Find the most recent stock_out
     const [lastOut] = await conn.query(
         `SELECT MAX(movement_date) AS last_out
          FROM inventory_movements
@@ -28,7 +29,6 @@ async function refreshMovementSpeed(conn, thanId) {
 
     const remaining = Number(than.remaining_stock);
 
-    // Already fully sold out
     if (remaining <= 0) {
         await conn.query(
             `UPDATE thans SET movement_speed = 'fast', status = 'sold_out' WHERE than_id = ?`,
@@ -38,7 +38,6 @@ async function refreshMovementSpeed(conn, thanId) {
     }
 
     if (!lastOut?.last_out) {
-        // Never sold — stay 'new'
         await conn.query(
             `UPDATE thans SET movement_speed = 'new' WHERE than_id = ?`,
             [thanId]
@@ -51,9 +50,9 @@ async function refreshMovementSpeed(conn, thanId) {
     );
 
     let speed;
-    if (daysSinceLastSale >= 60)      speed = 'dead';
-    else if (daysSinceLastSale >= 30) speed = 'slow';
-    else if (daysSinceLastSale >= 8)  speed = 'medium';
+    if      (daysSinceLastSale >= 90) speed = 'dead';   // was 60
+    else if (daysSinceLastSale >= 45) speed = 'slow';   // was 30
+    else if (daysSinceLastSale >= 14) speed = 'medium'; // was 8
     else                               speed = 'fast';
 
     await conn.query(
@@ -130,13 +129,11 @@ router.post('/', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
             ]
         );
 
-        // Decrement remaining stock
         await conn.query(
             'UPDATE thans SET remaining_stock = remaining_stock - ? WHERE than_id = ?',
             [Number(quantity), than_id]
         );
 
-        // Log inventory movement
         await conn.query(
             `INSERT INTO inventory_movements
                 (than_id, movement_type, quantity, from_location, to_location,
@@ -150,10 +147,8 @@ router.post('/', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
             ]
         );
 
-        // ── Re-classify movement_speed based on updated history ──────────────
         await refreshMovementSpeed(conn, than_id);
 
-        // Auto-update outstanding_balance for credit/mixed payment retailers
         if (retailer_id && pStatus !== 'paid') {
             const saleTotal = Number(price) * Number(quantity) - disc;
             await conn.query(

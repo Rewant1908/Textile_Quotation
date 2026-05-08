@@ -23,11 +23,10 @@ export default function QuotationHistory({ user }) {
         setTimeout(() => setToast(null), 3500)
     }
 
+    // Bug 1 fix: replaced all `fetch(`${API}/api/...`)` with API.get/patch — API is axios instance
     const load = useCallback(() => {
-        const url = `${API}/api/quotations?user_id=${user.user_id}`
-        fetch(url)
-            .then(r => r.json())
-            .then(data => { setQuotations(Array.isArray(data) ? data : []); setLoading(false) })
+        API.get('/quotations', { params: { user_id: user.user_id } })
+            .then(r => { setQuotations(Array.isArray(r.data) ? r.data : []); setLoading(false) })
             .catch(() => setLoading(false))
     }, [user.user_id])
 
@@ -36,18 +35,24 @@ export default function QuotationHistory({ user }) {
     const viewDetail = async (id) => {
         if (selected === id) { setSelected(null); setDetail(null); return }
         setSelected(id)
-        const res = await fetch(`${API}/api/quotations/${id}`)
-        setDetail(await res.json())
+        try {
+            const r = await API.get(`/quotations/${id}`)
+            setDetail(r.data)
+        } catch { setDetail(null) }
     }
 
     const updateStatus = async (id, status, decline_reason = null) => {
-        const res = await fetch(`${API}/api/quotations/${id}/status`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status, decline_reason, user_id: user?.user_id })
-        })
-        const data = await res.json()
-        if (!res.ok) { showToast(data.error || 'Action failed', 'error'); return }
+        try {
+            const r = await API.patch(`/quotations/${id}/status`, {
+                status,
+                decline_reason,
+                user_id: user?.user_id
+            })
+            if (r.data?.error) { showToast(r.data.error, 'error'); return }
+        } catch (err) {
+            showToast(err?.response?.data?.error || 'Action failed', 'error')
+            return
+        }
         setDeclineId(null)
         setReason('')
         load()
@@ -160,7 +165,6 @@ export default function QuotationHistory({ user }) {
                                                         <td>{item.quantity} m</td>
                                                         <td>NPR {Number(item.unit_price_at_time).toFixed(2)}</td>
                                                         <td>NPR {Number(item.line_total).toFixed(2)}</td>
-
                                                     </tr>
                                                 ))}
                                                 </tbody>
@@ -180,9 +184,6 @@ export default function QuotationHistory({ user }) {
                 })}
                 </tbody>
             </table>
-            {quotations.length === 0 && (
-                <p style={{ color: '#94a3b8', textAlign: 'center', padding: '20px' }}>No quotations yet.</p>
-            )}
         </div>
     )
 }
