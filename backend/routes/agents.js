@@ -3,13 +3,13 @@
 //
 // POST /api/agents/query        → single agent dispatch
 // POST /api/agents/procurement  → parallel 3-agent procurement fork
-// GET  /api/agents/memory/:scope → read agent memory files (admin only)
+// GET  /api/agents/memory/:scope → read agent memory files
 
-import { Router }               from 'express'
-import { runAgent }             from '../agents/runner/agentRunner.js'
-import { runProcurementFork }   from '../agents/runner/forkRunner.js'
-import { readMemory }           from '../agents/runner/agentMemory.js'
-import { checkPermission }      from '../middleware/checkPermission.js'
+import { Router }             from 'express'
+import { runAgent }           from '../agents/runner/agentRunner.js'
+import { runProcurementFork } from '../agents/runner/forkRunner.js'
+import { readMemory }         from '../agents/runner/agentMemory.js'
+import { checkPermission }    from '../middleware/checkPermission.js'
 
 const router = Router()
 
@@ -18,15 +18,12 @@ const VALID_AGENTS = ['inventory', 'retailer', 'procurement', 'warehouse', 'pric
 // Single agent dispatch
 router.post('/query', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
     const { agent, query, context } = req.body
-    if (!agent || !query) {
+    if (!agent || !query)
         return res.status(400).json({ error: 'agent and query are required' })
-    }
-    if (!VALID_AGENTS.includes(agent)) {
+    if (!VALID_AGENTS.includes(agent))
         return res.status(400).json({ error: `Unknown agent. Valid: ${VALID_AGENTS.join(', ')}` })
-    }
-    if (!process.env.ANTHROPIC_API_KEY) {
-        return res.status(503).json({ error: 'ANTHROPIC_API_KEY not configured. AI agents are disabled.' })
-    }
+    if (!process.env.GEMINI_API_KEY)
+        return res.status(503).json({ error: 'GEMINI_API_KEY not configured. AI agents are disabled.' })
     try {
         const result = await runAgent({
             agentName: agent,
@@ -44,9 +41,8 @@ router.post('/query', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
 // Parallel procurement fork
 router.post('/procurement', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
     const { context } = req.body
-    if (!process.env.ANTHROPIC_API_KEY) {
-        return res.status(503).json({ error: 'ANTHROPIC_API_KEY not configured. AI agents are disabled.' })
-    }
+    if (!process.env.GEMINI_API_KEY)
+        return res.status(503).json({ error: 'GEMINI_API_KEY not configured. AI agents are disabled.' })
     try {
         const result = await runProcurementFork({
             context:  context || '',
@@ -63,9 +59,8 @@ router.post('/procurement', checkPermission('VIEW_OPERATIONS'), async (req, res)
 router.get('/memory/:scope', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
     const { scope } = req.params
     const { agent = 'inventory' } = req.query
-    if (!['project', 'user', 'local'].includes(scope)) {
+    if (!['project', 'user', 'local'].includes(scope))
         return res.status(400).json({ error: 'scope must be project, user, or local' })
-    }
     try {
         const content = await readMemory(scope, agent, req.user?.username || 'system')
         res.json({ scope, agent, content: content || '(no memory yet)' })
