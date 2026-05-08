@@ -1,6 +1,6 @@
 ---
 name: SalesAgent
-model: gemini-2.0-flash
+model: gemini-2.5-flash
 effort: medium
 maxTurns: 6
 permissionMode: restricted

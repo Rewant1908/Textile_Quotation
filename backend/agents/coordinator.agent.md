@@ -1,6 +1,6 @@
 ---
 name: CoordinatorAgent
-model: gemini-2.0-flash
+model: gemini-2.5-flash
 effort: high
 maxTurns: 10
 permissionMode: restricted

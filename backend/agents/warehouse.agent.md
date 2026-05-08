@@ -1,6 +1,6 @@
 ---
 name: WarehouseAgent
-model: gemini-2.0-flash
+model: gemini-2.5-flash
 effort: low
 maxTurns: 4
 permissionMode: read-only
