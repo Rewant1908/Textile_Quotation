@@ -4,6 +4,8 @@
  *   1. req.headers['x-user-id']  — used by GET requests that can't send a body
  *   2. req.body.user_id          — used by POST/PUT/PATCH
  *   3. req.query.user_id         — used by GET with query params
+ *
+ * Bug 3 fix: added MANAGE_QUOTATION_STATUS permission for PATCH /api/quotations/:id/status
  */
 
 import pool from '../db.js';
