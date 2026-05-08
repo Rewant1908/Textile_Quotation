@@ -386,6 +386,10 @@ app.get('/api/operations/dashboard', checkPermission('VIEW_OPERATIONS'), async (
              LIMIT 8`
         );
 
+        // ── DEAD STOCK WATCHLIST (fixed) ──────────────────────────────────────
+        // idle days = days since the LATEST movement of ANY type (stock_in OR stock_out)
+        // This means a brand-new than that arrived 40 days ago and was never sold
+        // correctly shows 40 idle days, not NULL.
         const deadStock = await conn.query(
             `SELECT
                 t.than_id,
@@ -401,8 +405,8 @@ app.get('/api/operations/dashboard', checkPermission('VIEW_OPERATIONS'), async (
                 t.movement_speed,
                 DATEDIFF(CURDATE(),
                     DATE(COALESCE(
-                        MAX(im.movement_date),
-                        t.created_at
+                        MAX(im.movement_date),   -- last movement of any type
+                        t.created_at             -- fallback: when the than was created
                     ))
                 ) AS days_without_movement
              FROM thans t
@@ -517,195 +521,9 @@ app.get('/api/inventory/search', async (req, res) => {
     finally { if (conn) conn.release(); }
 });
 
-// ─── CUSTOMER ENQUIRY (dealer registration) ───────────────────────────────────
-// POST /api/enquiry — called by CustomerForm.jsx
-// Bug 3 fix: this route was completely missing; frontend was hitting a 404.
-app.post('/api/enquiry', async (req, res) => {
-    const { customer_name, contact_phone, email } = req.body;
-    if (!customer_name?.trim())
-        return res.status(400).json({ error: 'customer_name is required' });
-    if (email && !emailRegex.test(email))
-        return res.status(400).json({ error: 'Invalid email format' });
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        const [existing] = await conn.query(
-            'SELECT customer_id FROM customers WHERE customer_name = ?', [customer_name.trim()]
-        );
-        if (existing)
-            return res.status(409).json({ error: 'A customer with this name already exists', customer_id: existing.customer_id });
-        const result = await conn.query(
-            'INSERT INTO customers (customer_name, contact_phone, email) VALUES (?, ?, ?)',
-            [customer_name.trim(), contact_phone?.trim() || null, email?.trim() || null]
-        );
-        res.status(201).json({ success: true, customer_id: Number(result.insertId) });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-    finally { if (conn) conn.release(); }
-});
-
-// ─── QUOTATIONS ───────────────────────────────────────────────────────────────
-// Bug 3 fix: all four quotation routes were completely missing from server.js.
-// QuotationForm, QuotationHistory were calling endpoints that returned 404.
-// PATCH /quotations/:id/status is guarded by MANAGE_QUOTATION_STATUS (admin only).
-
-// POST /api/create-quotation — called by QuotationForm.jsx
-app.post('/api/create-quotation', async (req, res) => {
-    const { customer_id, user_id, items } = req.body;
-    if (!customer_id) return res.status(400).json({ error: 'customer_id is required' });
-    if (!Array.isArray(items) || items.length === 0)
-        return res.status(400).json({ error: 'items array must not be empty' });
-    for (let i = 0; i < items.length; i++) {
-        if (!items[i].product_id || !items[i].quantity || Number(items[i].quantity) <= 0)
-            return res.status(400).json({ error: `Item ${i + 1}: product_id and quantity > 0 required` });
-    }
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        const [customer] = await conn.query('SELECT customer_id FROM customers WHERE customer_id = ?', [customer_id]);
-        if (!customer) return res.status(404).json({ error: 'Customer not found' });
-
-        await conn.beginTransaction();
-
-        // Build line items with prices from products table
-        let subtotal = 0;
-        const lineItems = [];
-        for (const item of items) {
-            const [product] = await conn.query(
-                'SELECT product_id, product_name, base_price FROM products WHERE product_id = ?',
-                [item.product_id]
-            );
-            if (!product) {
-                await conn.rollback();
-                return res.status(404).json({ error: `Product ${item.product_id} not found` });
-            }
-            const unit_price = Number(product.base_price);
-            const qty        = Number(item.quantity);
-            const line_total = unit_price * qty;
-            subtotal        += line_total;
-            lineItems.push({ product_id: product.product_id, product_name: product.product_name, quantity: qty, unit_price, line_total });
-        }
-
-        const vat         = subtotal * 0.13;
-        const grand_total = subtotal + vat;
-
-        const qResult = await conn.query(
-            `INSERT INTO quotations (customer_id, user_id, subtotal, vat, grand_total, status, created_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', NOW())`,
-            [customer_id, user_id || null, subtotal, vat, grand_total]
-        );
-        const quotation_id = Number(qResult.insertId);
-
-        for (const li of lineItems) {
-            await conn.query(
-                `INSERT INTO quotation_items (quotation_id, product_id, quantity, unit_price, line_total)
-                 VALUES (?, ?, ?, ?, ?)`,
-                [quotation_id, li.product_id, li.quantity, li.unit_price, li.line_total]
-            );
-        }
-
-        await conn.commit();
-        res.status(201).json({ success: true, quotation_id, subtotal, vat, grand_total });
-    } catch (err) {
-        if (conn) await conn.rollback();
-        res.status(500).json({ error: err.message });
-    } finally { if (conn) conn.release(); }
-});
-
-// GET /api/quotations — list quotations; admin sees all, user sees own
-app.get('/api/quotations', async (req, res) => {
-    const user_id = req.query.user_id ? Number(req.query.user_id) : null;
-    if (!user_id) return res.status(400).json({ error: 'user_id is required' });
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        const [requestingUser] = await conn.query('SELECT role FROM users WHERE user_id = ?', [user_id]);
-        if (!requestingUser) return res.status(401).json({ error: 'User not found' });
-
-        let rows;
-        if (requestingUser.role === 'admin') {
-            rows = await conn.query(
-                `SELECT q.quotation_id, q.status, q.subtotal, q.vat, q.grand_total, q.created_at,
-                        c.customer_name, u.username
-                 FROM quotations q
-                 LEFT JOIN customers c ON q.customer_id = c.customer_id
-                 LEFT JOIN users     u ON q.user_id     = u.user_id
-                 ORDER BY q.created_at DESC`
-            );
-        } else {
-            rows = await conn.query(
-                `SELECT q.quotation_id, q.status, q.subtotal, q.vat, q.grand_total, q.created_at,
-                        c.customer_name
-                 FROM quotations q
-                 LEFT JOIN customers c ON q.customer_id = c.customer_id
-                 WHERE q.user_id = ?
-                 ORDER BY q.created_at DESC`,
-                [user_id]
-            );
-        }
-        res.json(rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-    finally { if (conn) conn.release(); }
-});
-
-// GET /api/quotations/:id — get single quotation with line items
-app.get('/api/quotations/:id', async (req, res) => {
-    const quotation_id = Number(req.params.id);
-    if (!Number.isInteger(quotation_id) || quotation_id <= 0)
-        return res.status(400).json({ error: 'Invalid quotation ID' });
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        const [q] = await conn.query(
-            `SELECT q.*, c.customer_name, u.username
-             FROM quotations q
-             LEFT JOIN customers c ON q.customer_id = c.customer_id
-             LEFT JOIN users     u ON q.user_id     = u.user_id
-             WHERE q.quotation_id = ?`,
-            [quotation_id]
-        );
-        if (!q) return res.status(404).json({ error: 'Quotation not found' });
-
-        const items = await conn.query(
-            `SELECT qi.*, p.product_name
-             FROM quotation_items qi
-             LEFT JOIN products p ON qi.product_id = p.product_id
-             WHERE qi.quotation_id = ?`,
-            [quotation_id]
-        );
-        res.json({ ...q, items });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-    finally { if (conn) conn.release(); }
-});
-
-// PATCH /api/quotations/:id/status — admin only (Bug 3 fix: checkPermission guard)
-app.patch('/api/quotations/:id/status', checkPermission('MANAGE_QUOTATION_STATUS'), async (req, res) => {
-    const quotation_id = Number(req.params.id);
-    if (!Number.isInteger(quotation_id) || quotation_id <= 0)
-        return res.status(400).json({ error: 'Invalid quotation ID' });
-
-    const { status, decline_reason } = req.body;
-    const allowed = ['pending', 'accepted', 'declined'];
-    if (!allowed.includes(status))
-        return res.status(400).json({ error: `status must be one of: ${allowed.join(', ')}` });
-    if (status === 'declined' && !decline_reason?.trim())
-        return res.status(400).json({ error: 'decline_reason is required when declining' });
-
-    let conn;
-    try {
-        conn = await pool.getConnection();
-        const [q] = await conn.query('SELECT quotation_id FROM quotations WHERE quotation_id = ?', [quotation_id]);
-        if (!q) return res.status(404).json({ error: 'Quotation not found' });
-
-        await conn.query(
-            `UPDATE quotations SET status = ?, decline_reason = ?, updated_at = NOW() WHERE quotation_id = ?`,
-            [status, status === 'declined' ? decline_reason.trim() : null, quotation_id]
-        );
-        res.json({ success: true, quotation_id, status });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-    finally { if (conn) conn.release(); }
-});
-
-// ─── BATCH movement_speed RECALCULATION ──────────────────────────────────────
+// ─── BATCH movement_speed RECALCULATION (run once to fix existing data) ───────
+// POST /api/admin/recalculate-speeds
+// Useful to backfill movement_speed for all existing thans after this deploy.
 app.post('/api/admin/recalculate-speeds', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
     let conn;
     try {
@@ -723,14 +541,14 @@ app.post('/api/admin/recalculate-speeds', checkPermission('MANAGE_PRODUCTS'), as
 
         let updated = 0;
         for (const row of thans) {
-            const idle  = Number(row.idle_days || 0);
+            const idle = Number(row.idle_days || 0);
             const sales = Number(row.sale_count || 0);
             let speed;
-            if (sales === 0)      speed = 'new';
-            else if (idle >= 90)  speed = 'dead';
-            else if (idle >= 45)  speed = 'slow';
-            else if (idle >= 14)  speed = 'medium';
-            else                  speed = 'fast';
+            if (sales === 0)           speed = 'new';
+            else if (idle >= 60)       speed = 'dead';
+            else if (idle >= 30)       speed = 'slow';
+            else if (idle >= 8)        speed = 'medium';
+            else                        speed = 'fast';
 
             await conn.query('UPDATE thans SET movement_speed = ? WHERE than_id = ?', [speed, row.than_id]);
             updated++;
