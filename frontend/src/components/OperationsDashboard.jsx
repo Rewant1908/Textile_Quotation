@@ -4,25 +4,25 @@ import API from '../api'
 const money  = (v) => `NPR ${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`
 const meters = (v) => `${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })} m`
 
-// Colour threshold for idle-days badge
 function idlePillClass(days, speed) {
     if (speed === 'dead' || Number(days) >= 60) return 'mini-pill danger'
     if (Number(days) >= 30)                     return 'mini-pill warning'
     return 'mini-pill'
 }
 
-// Human-readable speed label
 const speedLabel = { new: 'New', slow: 'Slow', medium: 'Mid', fast: 'Fast', dead: 'Dead' }
 
 export default function OperationsDashboard({ user }) {
-    const [dashboard,  setDashboard]  = useState(null)
-    const [inventory,  setInventory]  = useState([])
-    const [query,      setQuery]      = useState('')
-    const [maxPrice,   setMaxPrice]   = useState('')
-    const [loading,    setLoading]    = useState(true)
-    const [searching,  setSearching]  = useState(false)
-    const [searchDone, setSearchDone] = useState(false)
-    const [toast,      setToast]      = useState(null)
+    const [dashboard,      setDashboard]      = useState(null)
+    const [inventory,      setInventory]      = useState([])
+    const [topRetailers,   setTopRetailers]   = useState([])
+    const [marginSupplier, setMarginSupplier] = useState([])
+    const [query,          setQuery]          = useState('')
+    const [maxPrice,       setMaxPrice]       = useState('')
+    const [loading,        setLoading]        = useState(true)
+    const [searching,      setSearching]      = useState(false)
+    const [searchDone,     setSearchDone]     = useState(false)
+    const [toast,          setToast]          = useState(null)
 
     const authHeader = useCallback(
         () => ({ 'x-user-id': String(user.user_id), 'x-user-role': user.role }),
@@ -37,8 +37,14 @@ export default function OperationsDashboard({ user }) {
     const loadDashboard = useCallback(async () => {
         setLoading(true)
         try {
-            const res = await API.get('/operations/dashboard', { headers: authHeader() })
-            setDashboard(res.data)
+            const [dashRes, retailersRes, marginsRes] = await Promise.all([
+                API.get('/operations/dashboard',           { headers: authHeader() }),
+                API.get('/analytics/top-retailers',        { headers: authHeader() }),
+                API.get('/analytics/margin-per-supplier',  { headers: authHeader() }),
+            ])
+            setDashboard(dashRes.data)
+            setTopRetailers(Array.isArray(retailersRes.data)  ? retailersRes.data  : [])
+            setMarginSupplier(Array.isArray(marginsRes.data)  ? marginsRes.data    : [])
         } catch (err) {
             showToast(err?.response?.data?.error || err.message || 'Could not load dashboard', 'error')
         } finally {
@@ -46,7 +52,6 @@ export default function OperationsDashboard({ user }) {
         }
     }, [authHeader])
 
-    // Search — auth header required
     const searchInventory = useCallback(async () => {
         setSearching(true)
         const params = {}
@@ -80,7 +85,7 @@ export default function OperationsDashboard({ user }) {
         <div className="ops-page">
             {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
 
-            {/* ── Hero ──────────────────────────────────────────────────────── */}
+            {/* ── Hero ─────────────────────────────────────────────────────── */}
             <section className="card ops-hero">
                 <div>
                     <p className="eyebrow">Wholesale intelligence</p>
@@ -160,13 +165,8 @@ export default function OperationsDashboard({ user }) {
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Than</th>
-                                    <th>Fabric</th>
-                                    <th>Stock</th>
-                                    <th>Cost Value</th>
-                                    <th>Location</th>
-                                    <th>Speed</th>
-                                    <th>Idle Days</th>
+                                    <th>Than</th><th>Fabric</th><th>Stock</th>
+                                    <th>Cost Value</th><th>Location</th><th>Speed</th><th>Idle Days</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -195,9 +195,7 @@ export default function OperationsDashboard({ user }) {
                             </tbody>
                         </table>
                     ) : (
-                        <p className="empty-state">
-                            ✅ No dead or slow stock detected. All thans are moving.
-                        </p>
+                        <p className="empty-state">✅ No dead or slow stock detected. All thans are moving.</p>
                     )}
                 </Panel>
 
@@ -222,6 +220,99 @@ export default function OperationsDashboard({ user }) {
                             </tbody>
                         </table>
                     ) : <p className="empty-state">No retailers added yet.</p>}
+                </Panel>
+            </section>
+
+            {/* ── TOP RETAILERS + MARGIN-PER-SUPPLIER ──────────────────────── */}
+            <section className="ops-grid two">
+                <Panel title="Top Retailers by Revenue">
+                    {topRetailers.length ? (
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Shop</th>
+                                    <th>Location</th>
+                                    <th>Orders</th>
+                                    <th>Revenue</th>
+                                    <th>Margin %</th>
+                                    <th>Balance</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {topRetailers.map((row, i) => (
+                                    <tr key={row.retailer_id}>
+                                        <td className="price-accent">#{i + 1}</td>
+                                        <td>
+                                            {row.shop_name}
+                                            {row.preferred_categories && (
+                                                <><br /><small style={{ color: 'var(--color-text-muted, #888)' }}>{row.preferred_categories}</small></>
+                                            )}
+                                        </td>
+                                        <td>{row.market_location || '—'}</td>
+                                        <td>{Number(row.order_count || 0)}</td>
+                                        <td className="price-accent">{money(row.revenue)}</td>
+                                        <td>
+                                            <span className={`mini-pill ${
+                                                Number(row.margin_pct) >= 20 ? '' : 'warning'
+                                            }`}>
+                                                {row.margin_pct != null ? `${row.margin_pct}%` : '—'}
+                                            </span>
+                                        </td>
+                                        <td className={Number(row.outstanding_balance) > 0 ? 'risk-text' : ''}>
+                                            {money(row.outstanding_balance)}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : (
+                        <p className="empty-state">No retailer transactions yet. Record a sale to see rankings.</p>
+                    )}
+                </Panel>
+
+                <Panel title="Margin per Supplier">
+                    {marginSupplier.length ? (
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Supplier</th>
+                                    <th>Quality</th>
+                                    <th>Delay</th>
+                                    <th>Margin/m</th>
+                                    <th>Total Margin</th>
+                                    <th>Capital Eff.</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {marginSupplier.map(row => (
+                                    <tr key={row.supplier_id}>
+                                        <td>
+                                            {row.supplier_name}
+                                            {row.trend_alignment && (
+                                                <><br /><small style={{ color: 'var(--color-text-muted, #888)' }}>{row.trend_alignment}</small></>
+                                            )}
+                                        </td>
+                                        <td>{Number(row.quality_rating || 0).toFixed(1)}/5</td>
+                                        <td><span className="mini-pill">{row.delay_frequency || '—'}</span></td>
+                                        <td className="price-accent">
+                                            {row.margin_per_meter != null ? money(row.margin_per_meter) + '/m' : '—'}
+                                        </td>
+                                        <td className="price-accent">{money(row.realized_margin)}</td>
+                                        <td>
+                                            <span className={`mini-pill ${
+                                                Number(row.capital_efficiency_pct) >= 30 ? '' : 'warning'
+                                            }`}>
+                                                {row.capital_efficiency_pct != null ? `${row.capital_efficiency_pct}%` : '—'}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : (
+                        <p className="empty-state">No supplier data yet. Add bales from suppliers to see margins.</p>
+                    )}
                 </Panel>
             </section>
 
