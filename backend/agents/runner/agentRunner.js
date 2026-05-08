@@ -1,6 +1,14 @@
 // agentRunner.js — Core agent lifecycle
-// Phase 4: Technical Foundation
-// Uses Google Gemini (free tier) instead of Anthropic.
+// Phase 4 / Phase 6: Technical Foundation + AI Memory Design
+//
+// Memory update protocol:
+//   Agent response MAY contain a block delimited by:
+//     MEMORY_UPDATE:
+//     ...new memory content...
+//     END_MEMORY
+//   This block is extracted, stripped from the display response, and persisted
+//   via writeMemorySnapshot(). Using END_MEMORY prevents the greedy regex
+//   from truncating multi-paragraph memory updates.
 
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { readFile }           from 'fs/promises'
@@ -43,16 +51,54 @@ async function loadAgentDefinition(agentName) {
 }
 
 /**
+ * extractMemoryUpdate — extracts MEMORY_UPDATE...END_MEMORY block.
+ * Returns { memoryContent, cleanResponse } where cleanResponse has the
+ * sentinel block removed so it is not shown to the end user.
+ */
+function extractMemoryUpdate(responseText) {
+    // Match MEMORY_UPDATE: ... END_MEMORY (multi-line, non-greedy)
+    const match = responseText.match(/MEMORY_UPDATE:\s*([\s\S]*?)\s*END_MEMORY/)
+    if (!match) return { memoryContent: null, cleanResponse: responseText }
+
+    const memoryContent = match[1].trim()
+    const cleanResponse = responseText
+        .replace(/MEMORY_UPDATE:[\s\S]*?END_MEMORY/g, '')
+        .trim()
+    return { memoryContent, cleanResponse }
+}
+
+/**
+ * extractVerdict — finds the first verdict-style line in the response.
+ * Supports 5 verdict patterns used across all 7 agents.
+ */
+function extractVerdict(responseText) {
+    const patterns = [
+        /^(VERDICT[^\n]*)/m,
+        /^(RETAILER SIGNAL[^\n]*)/m,
+        /^(PROCUREMENT VERDICT[^\n]*)/m,
+        /^(PRICING VERDICT[^\n]*)/m,
+        /^(RETRIEVAL[^\n]*)/m,
+        /^(WAREHOUSE VERDICT[^\n]*)/m,
+        /^(SALES SIGNAL[^\n]*)/m,
+    ]
+    for (const pattern of patterns) {
+        const match = responseText.match(pattern)
+        if (match) return match[1].trim()
+    }
+    return null
+}
+
+/**
  * runAgent(agentName, query, context?, username?)
  *
  * Full lifecycle:
- * 1. Load agent definition
- * 2. Load memory for scope
- * 3. Build system prompt = definition + memory
+ * 1. Load agent definition (.agent.md frontmatter + system prompt)
+ * 2. Load memory for scope (Redis-cached, falls back to disk)
+ * 3. Build full system prompt = definition + memory + context
  * 4. Call Gemini API
  * 5. Extract VERDICT block
- * 6. Optionally persist memory update
- * 7. Return structured result
+ * 6. Extract and persist MEMORY_UPDATE...END_MEMORY block if present
+ * 7. Return structured result (cleanResponse has sentinel stripped)
  */
 export async function runAgent({ agentName, query, context = '', username = 'system' }) {
     const start = Date.now()
@@ -66,8 +112,8 @@ export async function runAgent({ agentName, query, context = '', username = 'sys
     // 3. Build full system prompt
     const fullSystemPrompt = [
         agent.systemPrompt,
-        memory  ? `\n\n## Agent Memory\n${memory}`       : '',
-        context ? `\n\n## Query Context\n${context}`     : '',
+        memory  ? `\n\n## Agent Memory\n${memory}`   : '',
+        context ? `\n\n## Query Context\n${context}` : '',
     ].join('')
 
     // 4. Call Gemini
@@ -77,30 +123,22 @@ export async function runAgent({ agentName, query, context = '', username = 'sys
     })
 
     const result       = await model.generateContent(query)
-    const fullResponse = result.response.text()
+    const rawResponse  = result.response.text()
 
-    // 5. Extract VERDICT block
-    const verdictMatch =
-        fullResponse.match(/^(VERDICT[^\n]*)/m)           ||
-        fullResponse.match(/^(RETAILER SIGNAL[^\n]*)/m)   ||
-        fullResponse.match(/^(PROCUREMENT VERDICT[^\n]*)/m) ||
-        fullResponse.match(/^(PRICING VERDICT[^\n]*)/m)   ||
-        fullResponse.match(/^(RETRIEVAL[^\n]*)/m)
-    const verdict = verdictMatch ? verdictMatch[1].trim() : null
+    // 5. Extract verdict first (before stripping memory block)
+    const verdict = extractVerdict(rawResponse)
 
-    // 6. Persist memory if agent signals an update
-    if (fullResponse.includes('MEMORY_UPDATE:')) {
-        const memUpdateMatch = fullResponse.match(/MEMORY_UPDATE:\s*([\s\S]*?)(?:\n\n|$)/)
-        if (memUpdateMatch) {
-            await writeMemorySnapshot(agent.memoryScope, agentName, username, memUpdateMatch[1].trim())
-        }
+    // 6. Extract and persist memory update (uses END_MEMORY sentinel)
+    const { memoryContent, cleanResponse } = extractMemoryUpdate(rawResponse)
+    if (memoryContent) {
+        await writeMemorySnapshot(agent.memoryScope, agentName, username, memoryContent)
     }
 
     return {
         agentName,
         verdict,
-        fullResponse,
-        durationMs: Date.now() - start,
-        model:      agent.model,
+        fullResponse: cleanResponse,
+        durationMs:  Date.now() - start,
+        model:       agent.model,
     }
 }

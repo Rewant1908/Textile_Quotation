@@ -1,99 +1,69 @@
-# Inventory Agent Memory — KT Impex
-_scope: project | last updated: 2026-05-08_
+# Inventory Agent Memory — KT Impex Wholesale Textile
+<!-- scope: project | agent: inventory -->
+<!-- Update this file by ending a response with MEMORY_UPDATE: ... END_MEMORY -->
 
----
+## Inventory Structure Knowledge
 
-## Dead Stock Classification Thresholds
-- **dead**: remaining_stock > 0 AND no stock_out in **60+ days**
-- **slow**: last stock_out was **30–59 days** ago
-- **medium**: last stock_out was **8–29 days** ago
-- **fast**: last stock_out was within **7 days**
-- **new**: never sold (no stock_out recorded yet)
+### The Bale → Than Hierarchy
+- **Gathri/Bale** = parent unit. Factory-packed. Contains 14–15 rolls.
+- **Than (Roll)** = sellable unit. ~17 meters per roll average.
+- One bale breakdown generates approximately 210–255 meters of sellable stock.
+- Cost per meter = (bale purchase cost + transport cost) / total meters from that bale.
 
-These thresholds are enforced by `trg_update_movement_speed_after_stock_out` DB trigger.
-Do NOT override these values in responses — they are system ground truth.
+### Movement Speed Thresholds
+The `movement_speed` ENUM on the `thans` table is maintained by database trigger `trg_update_movement_speed_after_stock_out`.
+Thresholds (days since last stock-out):
+- **`new`** — just cataloged, no stock-out event yet (< 7 days in system)
+- **`fast`** — last stock-out within 14 days
+- **`medium`** — last stock-out 14–45 days ago
+- **`slow`** — last stock-out 45–90 days ago
+- **`dead`** — no stock-out in 90+ days
 
----
+IMPORTANT: `movement_speed` is only recalculated on stock-out events via trigger. Newly registered thans start as `new` and will not show `fast` until first sale.
 
-## Category Velocity Benchmarks (Wholesale Textile — Indian Market)
+### Dead Stock Definition and Alert Thresholds
+- **Alert level 1** (slow): 45–90 days. Proactive discount suggestion (up to 8%).
+- **Alert level 2** (dead): 90–120 days. Liquidation pricing recommended. Move to Zone D.
+- **Alert level 3** (critical dead): 120+ days. Bundle with fast-movers. Consider write-off if < 5m remaining.
+- Dead stock value > 15% of total stock value → operational capital risk. Escalate to coordinator.
 
-| Category | Expected Sell-Through (90 days) | Dead Stock Risk | Notes |
-|---|---|---|---|
-| Cotton Plain | 70–85% | Low | Year-round demand, staple category |
-| Cotton Print | 65–80% | Low-Medium | Festival prints move fast, plain prints slow |
-| Synthetic | 50–70% | Medium | Season-sensitive, summer drops sharply |
-| Silk | 40–65% | Medium-High | Festival-dependent, slow in off-season |
-| Linen | 45–60% | Medium | Summer peak, near-dead in winter |
-| Denim | 60–75% | Low-Medium | Consistent but slow for non-standard weights |
-| Woolen | 35–55% | High | Extremely seasonal — Oct to Feb only |
-| Blended | 55–70% | Medium | Depends on specific blend, cotton-poly fastest |
-| Embroidered | 30–50% | High | Very festival-dependent, risky to overstock |
+### Sell-Through Rate Benchmarks
+Category benchmarks (what's normal for KT Impex):
+| Category | Expected Sell-Through (30 days) |
+|---|---|
+| Cotton prints | 70–90% |
+| Plain cotton | 60–80% |
+| Voile | 65–85% |
+| Polyester blends | 40–60% |
+| Georgette | 50–70% |
+| Jacquard | 30–50% |
+| Embroidered | 20–40% |
+| Silk blends | 20–35% |
+| Shawl / woollen | 10–25% (seasonal) |
 
----
+### Margin Velocity Definition
+Margin velocity = total margin earned per meter per day of storage.
+Formula: `(selling_price - cost_per_meter) × quantity_sold / days_in_warehouse`
 
-## Seasonal Movement Patterns
+High margin velocity = fast-moving AND high-margin. These are the business's best performers.
+Low margin velocity = slow-moving OR low-margin. These are capital inefficiency signals.
 
-### Peak Demand Months (Indian Wholesale Textile)
-- **January**: Wedding season stock liquidation, moderate demand
-- **February–March**: Slow period — Holi prints pick up in March
-- **April–May**: Summer fabrics peak (linen, light cotton, synthetic)
-- **June–July**: Monsoon slowdown — minimal movement
-- **August**: Raksha Bandhan + back-to-school moderate spike
-- **September–October**: **PEAK** — Navratri + Dussehra + Diwali prep
-- **October–November**: **HIGHEST PEAK** — Diwali season, all categories move fast
-- **November–December**: Wedding season peak — silk, embroidered, premium cotton
-- **December**: Year-end clearance + Christmas market (limited)
+### Inventory Valuation Method
+- Stock value = `remaining_stock × cost_per_meter` per than.
+- Total portfolio value = sum of all active thans.
+- Dead stock as % of total = key health metric. Target: < 10%.
 
-### Festival-Specific Demand Signals
-- **Diwali** (Oct–Nov): Cotton print, silk, embroidered — expect 2–3x normal velocity
-- **Navratri** (Sep–Oct): Chaniya choli fabrics, bright colors, embroidered — regional but strong
-- **Eid** (variable): Cotton, linen, light synthetic — 6–8 weeks before Eid
-- **Wedding Season** (Nov–Jan, Apr–May): Silk, embroidered, premium blended
-- **Holi** (Feb–Mar): Cotton plain (for color-safe use), budget segment
-- **Summer** (Apr–Jun): Linen, light cotton, light synthetic
+### Seasonal Inventory Patterns
+| Period | Expect | Action |
+|---|---|---|
+| Aug–Sep | New festival stock arriving | Fast bale breakdown, Zone A placement |
+| Oct–Nov (Diwali) | Peak sales velocity | Monitor Zone A depletion daily |
+| Dec–Jan | Post-festival slowdown | Begin dead stock review |
+| Feb–Mar | Pre-Holi restocking | Cotton prints and voile demand rises |
+| Apr–May | Eid preparation | Cotton and lawn print demand |
+| Jun–Jul | Monsoon slowdown | Synthetic slightly better, overall slow |
 
----
-
-## Warehouse Intelligence Rules
-
-### Shelf Placement Priority
-- Fast-moving thans → ground floor / most accessible shelves
-- New arrivals → mid-shelf, awaiting velocity classification
-- Slow-moving thans → back shelves, clearly labeled
-- Dead stock → dedicated liquidation zone (separate from active inventory)
-
-### Low Stock Alert Triggers
-- Alert when `remaining_stock < 20% of original meter_length`
-- Critical alert when `remaining_stock < 10% of original meter_length`
-- Never alert on dead stock (irrelevant to reorder)
-
-### Inventory Count Rules
-- Count by `than_id` (individual roll), not by bale
-- Remaining stock measured in **meters**
-- Cost basis: `cost_per_meter` (includes transport cost allocation)
-
----
-
-## Margin Intelligence
-- Minimum acceptable margin: **15% above cost_per_meter**
-- Target margin: **25–40%** depending on category
-- Dead stock exception: accept **5–10% margin** to liquidate (better than zero)
-- Never sell below `cost_per_meter` under any circumstance
-
----
-
-## Reorder Signal Logic
-- If a category has <20% remaining stock AND sell-through rate >60% → **BUY signal**
-- If a category has >40% dead stock → **HOLD signal** (do not reorder)
-- If a new season is 6–8 weeks away AND relevant category is low → **EARLY BUY signal**
-
----
-
-## Agent Behavior Rules
-- Always check `movement_speed` field before making stock recommendations
-- Cross-reference `seasonal_trends` on retailer table when recommending categories
-- When flagging dead stock, always suggest a specific retailer likely to buy it
-- Never recommend purchasing more of a category that already has dead stock > 20% of total
-
-## Last Verdict
-_No verdicts recorded yet. Will populate after first analysis run._
+## VERDICT Format
+Always end inventory responses with:
+`VERDICT: [stock health assessment] — [top 1–2 recommended actions]`
+Example: `VERDICT: Dead stock at 18% of portfolio value (critical) — Immediate Zone D consolidation + 12% liquidation discount on jacquard and embroidered lots`

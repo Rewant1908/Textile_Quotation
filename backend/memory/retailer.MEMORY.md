@@ -1,125 +1,72 @@
-# Retailer Agent Memory — KT Impex
-_scope: project | last updated: 2026-05-08_
-_Per-retailer memory lives in memory/users/{username}/retailer.MEMORY.md (not committed to git)_
+# Retailer Agent Memory — KT Impex Wholesale Textile
+<!-- scope: project | agent: retailer -->
+<!-- Update this file by ending a response with MEMORY_UPDATE: ... END_MEMORY -->
 
----
+## Retailer Intelligence Framework
 
-## Retailer Behavioral Archetypes
+### Retailer Segmentation
+Retailers are segmented into 4 behavioral tiers:
 
-Every retailer falls into one of these archetypes. Identify the archetype and apply the matching strategy.
+**Tier 1 — Anchor Retailers** (high volume, consistent)
+- Order monthly or more frequently
+- Average order > 300m
+- Payment: prompt (within 7 days)
+- Strategy: priority service, early access to new arrivals, relationship calls monthly
+- Example behavior: Pre-book festival stock 3–4 weeks in advance
 
-### 1. The Volume Buyer
-- **Signals**: Large order size (>₹20,000/order), frequent visits, buys multiple categories
-- **Payment**: Usually prompt — they have cash flow
-- **Strategy**: Prioritize their requests, offer first look at new arrivals, loyalty discount 3–5%
-- **Risk**: Low
-- **Recommendation logic**: Show full catalogue, emphasize new arrivals and fast-moving stock
+**Tier 2 — Regular Retailers** (medium volume, predictable)
+- Order every 4–8 weeks
+- Average order 100–300m
+- Payment: usually within 15 days
+- Strategy: proactive recommendations when new stock arrives in their preferred category
 
-### 2. The Specialist
-- **Signals**: Buys only 1–2 categories consistently, expert knowledge, negotiates hard
-- **Payment**: Usually prompt
-- **Strategy**: Stock their preferred categories deeply, alert them on new arrivals in their niche
-- **Risk**: Low — but highly price-sensitive
-- **Recommendation logic**: Only show their preferred categories, don't waste time on others
+**Tier 3 — Occasional Retailers** (low volume, price-sensitive)
+- Order 4–6 times per year
+- Average order < 100m
+- Payment: mostly cash/immediate
+- Strategy: festival timing outreach, dead stock liquidation offers
 
-### 3. The Festival Buyer
-- **Signals**: Dormant most of the year, large orders 4–6 weeks before festivals
-- **Payment**: Usually prompt (festival stock is pre-planned)
-- **Strategy**: Proactively contact 6–8 weeks before their festival, reserve stock
-- **Risk**: Medium — only active seasonally
-- **Recommendation logic**: Festival-specific categories only, time recommendations precisely
+**Tier 4 — Risky Retailers** (irregular, delayed payment)
+- Outstanding balance > ₹30,000 consistently
+- Payment pattern: delayed (30–60 days)
+- Strategy: require partial payment before new order, limit credit exposure
 
-### 4. The Bargain Hunter
-- **Signals**: Always negotiates, small orders, buys discounted/dead stock
-- **Payment**: Prompt for discounted items, delayed for regular pricing
-- **Strategy**: Use them for dead stock liquidation — offer liquidation deals first
-- **Risk**: Low for liquidation, high for regular margin
-- **Recommendation logic**: Always show dead stock first, frame as "special price"
+### Preference Tracking Rules
+- When a retailer buys the same fabric type 3+ times → store as confirmed preference
+- When a retailer rejects a recommendation 2+ times → remove from suggestion pool
+- Price segment: inferred from average transaction price per meter over last 10 orders
+- Seasonal pattern: track which months orders spike vs. drop for each retailer
 
-### 5. The Credit Risk
-- **Signals**: `payment_pattern = delayed`, `outstanding_balance > ₹10,000`, history of disputes
-- **Payment**: Consistently late or partial
-- **Strategy**: Limit credit exposure, require partial advance, reduce order size
-- **Risk**: High — flag every transaction
-- **Recommendation logic**: Standard recommendations but add 2–3% to quoted price to cover credit cost
+### Known Category Preferences by Market
+- **Birgunj main market** — Cotton prints, plain cotton, voile. Price sensitive. Under ₹85/m.
+- **Raxaul cross-border buyers** — Premium fabrics, silk blends, georgette. Less price-sensitive.
+- **Rural supply retailers** — Basics only. Plain cotton, polyester. Under ₹60/m.
+- **Festival specialty retailers** — Embroidered, jacquard, net, silk. Buy 6–8 weeks pre-festival.
 
-### 6. The Relationship Buyer
-- **Signals**: Buys consistently regardless of price, refers other retailers, trusts recommendations
-- **Payment**: May delay occasionally but always settles
-- **Strategy**: Invest in relationship — share market intelligence, call proactively
-- **Risk**: Low — most valuable retailer type
-- **Recommendation logic**: Personalized recommendations based on their shop's end-customer profile
-
----
-
-## Payment Pattern Intelligence
-
-| Pattern | Definition | Action |
+### Payment Pattern Definitions
+| Pattern | Meaning | Credit Limit Recommendation |
 |---|---|---|
-| `immediate` | Pays on delivery or same day | Full credit available |
-| `7-day` | Pays within a week | Standard credit |
-| `30-day` | Pays within a month | Monitor outstanding balance |
-| `delayed` | Pays after 30+ days or only partial | Restrict credit, require advance |
+| `prompt` | Pays within 7 days | Up to ₹50,000 |
+| `regular` | Pays within 15 days | Up to ₹30,000 |
+| `delayed` | Pays in 30–60 days | Up to ₹15,000 |
+| `problematic` | Pays > 60 days or disputes | Cash only |
 
-**Outstanding balance thresholds:**
-- < ₹5,000: Normal — no action
-- ₹5,000–15,000: Monitor — mention gently on next visit
-- ₹15,000–30,000: Flag — require partial payment before new order
-- > ₹30,000: Block new credit — cash only until cleared
-
----
-
-## Festival Buying Intelligence
-
-### Pre-Festival Window (6–8 weeks before)
-- Retailers stock up heavily — this is when to push recommendations
-- Volume buyers will place their largest orders of the year
-- Festival buyers become active — proactively reach out
-- Do NOT offer discounts during this window — demand is high
-
-### Post-Festival (1–2 weeks after)
-- Retailers have excess stock — they will not buy until it clears
-- Do not push recommendations immediately post-festival
-- Use this period for dead stock liquidation to bargain hunters
-
-### Festival-Specific Retailer Patterns
-- **Diwali**: All archetypes active — biggest buying window of the year
-- **Wedding season**: Specialist and Volume buyers dominant
-- **Eid**: Specific regional retailers — track which retailers buy for Eid
-- **Navratri/Garba**: Strong in Gujarat — note market location of retailers
-
----
-
-## Recommendation Logic
-
-### When a retailer asks "what do you have?"
-1. Check their `preferred_categories_json` — show those first
-2. Check their `seasonal_trends` — align with current season
-3. Check their `average_order_size` — recommend in that price range
-4. Check current fast-moving thans — prioritize those
-5. If they have dead stock affinity (Bargain Hunter) — show liquidation items
-
-### When recommending proactively
-1. Check upcoming festivals (next 6–8 weeks)
-2. Match festival to category demand (see product.MEMORY.md)
-3. Cross-reference retailer's past festival purchases
-4. Recommend specific thans with stock > 20 meters (enough to fill their order)
-
----
-
-## Retailer Memory Template (Per-User Scope)
+### Retailer Memory Update Protocol
+When a new behavioral signal is observed (new preference, payment change, order spike), end the response with:
 ```
-Retailer: [shop_name] | ID: [retailer_id]
-Archetype: [Volume/Specialist/Festival/Bargain/CreditRisk/Relationship]
-Preferred Categories: [list from preferred_categories_json]
-Avg Order Size: ₹[amount]
-Payment Pattern: [immediate/7-day/30-day/delayed]
-Outstanding Balance: ₹[amount]
-Last Visit: [YYYY-MM-DD]
-Last Purchase: [category] at ₹[price]/meter
-Festival Buying: [which festivals, approx spend]
-Market Location: [area/market name]
-Personality Notes: [negotiates hard / trusts recommendations / price-sensitive / etc.]
-Relationship Score: [1-5]
-Agent Notes: [any behavioral patterns observed]
+MEMORY_UPDATE:
+[updated retailer intelligence content here]
+END_MEMORY
 ```
+This will be persisted automatically by the agent runner.
+
+## RETAILER SIGNAL Format
+Always end retailer-related responses with:
+`RETAILER SIGNAL: [recommended action] — [reason]`
+Example: `RETAILER SIGNAL: Reach out to Birgunj cotton buyers — 3 new cotton print lots arrived, matches their confirmed preference under ₹80/m`
+
+## Retailer Outreach Calendar
+- **4 weeks before Diwali** → call all Tier 1 and Tier 2 retailers, share festival stock preview
+- **2 weeks before Eid** → contact voile and cotton print buyers specifically
+- **Post-monsoon (Sep)** → contact retailers who ordered in the previous Oct–Nov cycle
+- **January** → review outstanding balances from Diwali cycle, follow up collections
