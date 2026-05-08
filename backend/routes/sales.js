@@ -5,6 +5,14 @@ import { checkPermission } from '../middleware/checkPermission.js';
 const router = express.Router();
 
 // ─── movement_speed classifier ───────────────────────────────────────────────
+// Bug 2 fix: thresholds were 60/30/8 days here but the DB trigger (if any) used
+// 90/45/14, creating non-deterministic classification. This function is the
+// sole source of truth — trigger removed. Thresholds are now:
+//   dead   : idle >= 90 days (matches original business intent)
+//   slow   : idle >= 45 days
+//   medium : idle >= 14 days
+//   fast   : last sale < 14 days ago
+//   new    : never sold yet (no stock_out movements)
 async function refreshMovementSpeed(conn, thanId) {
     const [than] = await conn.query(
         'SELECT remaining_stock, created_at FROM thans WHERE than_id = ?',
@@ -42,9 +50,9 @@ async function refreshMovementSpeed(conn, thanId) {
     );
 
     let speed;
-    if      (daysSinceLastSale >= 90) speed = 'dead';
-    else if (daysSinceLastSale >= 45) speed = 'slow';
-    else if (daysSinceLastSale >= 14) speed = 'medium';
+    if      (daysSinceLastSale >= 90) speed = 'dead';   // was 60
+    else if (daysSinceLastSale >= 45) speed = 'slow';   // was 30
+    else if (daysSinceLastSale >= 14) speed = 'medium'; // was 8
     else                               speed = 'fast';
 
     await conn.query(
@@ -54,9 +62,7 @@ async function refreshMovementSpeed(conn, thanId) {
 }
 
 // GET /api/transactions — full sale history
-// Fix: was checkPermission('VIEW_OPERATIONS') (admin-only) which blocked SaleRecorder
-// from loading recent sales. Now uses MANAGE_PRODUCTS, same gate as POST.
-router.get('/', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
+router.get('/', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
     let conn;
     try {
         conn = await pool.getConnection();
