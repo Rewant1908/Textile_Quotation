@@ -16,6 +16,7 @@ import retailerRoutes    from './routes/retailers.js';
 import salesRoutes       from './routes/sales.js';
 import agentRoutes       from './routes/agents.js';
 import analyticsRoutes   from './routes/analytics.js';
+import quotationRoutes   from './routes/quotations.js';
 
 const app = express();
 
@@ -69,12 +70,13 @@ app.use('/api',              authRoutes);        // POST /api/signup, POST /api/
 app.use('/api/products',     productRoutes);     // CRUD /api/products
 app.use('/api/suppliers',    supplierRoutes);    // GET  /api/suppliers
 app.use('/api/bales',        baleRoutes);        // CRUD /api/bales + /api/bales/:id/thans
-app.use('/api/operations',   operationsRoutes);  // GET  /api/operations/dashboard  ← FIX
+app.use('/api/operations',   operationsRoutes);  // GET  /api/operations/dashboard
 app.use('/api',              operationsRoutes);  // GET  /api/thans, /api/inventory/search, POST /api/admin/*
 app.use('/api/retailers',    retailerRoutes);    // CRUD /api/retailers
 app.use('/api/transactions',  salesRoutes);      // CRUD /api/transactions
 app.use('/api/agents',       agentRoutes);       // POST /api/agents/query, /api/agents/procurement
 app.use('/api/analytics',    analyticsRoutes);   // GET  /api/analytics/*
+app.use('/api/quotations',   quotationRoutes);   // CRUD /api/quotations
 
 // ─── HEALTH ───────────────────────────────────────────────────────────────────
 app.get('/api/health', async (req, res) => {
