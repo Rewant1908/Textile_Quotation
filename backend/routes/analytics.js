@@ -5,7 +5,7 @@ import { cache } from '../middleware/cacheMiddleware.js';
 
 const router = express.Router();
 
-// ── GET /api/analytics/top-retailers ─────────────────────────────────────────
+// ── GET /api/analytics/top-retailers ────────────────────────────────────────
 router.get('/top-retailers',
     checkPermission('VIEW_OPERATIONS'),
     cache('analytics:top-retailers', 120),
@@ -21,10 +21,10 @@ router.get('/top-retailers',
                     r.payment_pattern,
                     r.outstanding_balance,
                     r.preferred_categories,
-                    COUNT(tx.transaction_id)                                    AS order_count,
-                    COALESCE(SUM(tx.quantity), 0)                               AS meters_bought,
-                    COALESCE(SUM(tx.price * tx.quantity - tx.discount), 0)      AS revenue,
-                    COALESCE(SUM(tx.margin), 0)                                 AS margin,
+                    COUNT(tx.transaction_id)                               AS order_count,
+                    COALESCE(SUM(tx.quantity), 0)                          AS meters_bought,
+                    COALESCE(SUM(tx.price * tx.quantity - tx.discount), 0) AS revenue,
+                    COALESCE(SUM(tx.margin), 0)                            AS margin,
                     ROUND(
                         COALESCE(SUM(tx.margin), 0) /
                         NULLIF(COALESCE(SUM(tx.price * tx.quantity - tx.discount), 0), 0) * 100,
@@ -98,8 +98,6 @@ router.get('/margin-per-supplier',
 );
 
 // ── GET /api/analytics/margin-per-retailer ───────────────────────────────────
-// Returns per-retailer margin breakdown: margin ₹, margin %, avg per order,
-// outstanding balance, and payment pattern for credit risk assessment.
 router.get('/margin-per-retailer',
     checkPermission('VIEW_OPERATIONS'),
     cache('analytics:margin-per-retailer', 120),
@@ -145,9 +143,13 @@ router.get('/margin-per-retailer',
     }
 );
 
-// ── GET /api/analytics/bale-performance ──────────────────────────────────────
+// ── GET /api/analytics/bale-performance ──────────────────────────────────────────
 // Returns best and worst performing bales by total margin.
 // ?mode=best|worst&limit=5
+//
+// NOTE: The subquery aggregates transactions per than_id and exposes only
+//   quantity, margin, revenue_tx  — raw columns like price/discount are
+//   NOT available on the derived table alias `tx`.
 router.get('/bale-performance',
     checkPermission('VIEW_OPERATIONS'),
     cache('analytics:bale-performance', 120),
@@ -164,14 +166,14 @@ router.get('/bale-performance',
                     b.bale_code,
                     b.arrival_date,
                     s.supplier_name,
-                    COUNT(DISTINCT t.than_id)                               AS than_count,
-                    COALESCE(SUM(tx.quantity), 0)                           AS meters_sold,
-                    COALESCE(SUM(t.remaining_stock), 0)                     AS meters_remaining,
-                    COALESCE(SUM(tx.price * tx.quantity - tx.discount), 0)  AS revenue,
-                    COALESCE(SUM(tx.margin), 0)                             AS total_margin,
+                    COUNT(DISTINCT t.than_id)               AS than_count,
+                    COALESCE(SUM(tx.quantity), 0)           AS meters_sold,
+                    COALESCE(SUM(t.remaining_stock), 0)     AS meters_remaining,
+                    COALESCE(SUM(tx.revenue_tx), 0)         AS revenue,
+                    COALESCE(SUM(tx.margin), 0)             AS total_margin,
                     ROUND(
                         COALESCE(SUM(tx.margin), 0) /
-                        NULLIF(COALESCE(SUM(tx.price * tx.quantity - tx.discount), 0), 0) * 100,
+                        NULLIF(COALESCE(SUM(tx.revenue_tx), 0), 0) * 100,
                         1
                     ) AS margin_pct,
                     ROUND(
@@ -185,9 +187,9 @@ router.get('/bale-performance',
                  LEFT JOIN thans t      ON t.bale_id     = b.bale_id
                  LEFT JOIN (
                     SELECT than_id,
-                           SUM(quantity)                      AS quantity,
-                           SUM(margin)                        AS margin,
-                           SUM(price * quantity - discount)   AS revenue_tx
+                           SUM(quantity)                    AS quantity,
+                           SUM(margin)                      AS margin,
+                           SUM(price * quantity - discount) AS revenue_tx
                     FROM transactions
                     GROUP BY than_id
                  ) tx ON t.than_id = tx.than_id
