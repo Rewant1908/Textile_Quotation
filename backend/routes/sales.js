@@ -1,6 +1,7 @@
 import express from 'express';
 import pool from '../db.js';
 import { checkPermission } from '../middleware/checkPermission.js';
+import { del } from '../cache.js';
 
 const router = express.Router();
 
@@ -165,6 +166,10 @@ router.post('/', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
         }
 
         await conn.commit();
+
+        // Bust dashboard cache so the next load reflects this new sale
+        del('dashboard').catch(() => {});
+
         res.status(201).json({ success: true, transaction_id: Number(result.insertId), margin });
     } catch (err) {
         if (conn) await conn.rollback();
