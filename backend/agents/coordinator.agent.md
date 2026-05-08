@@ -1,6 +1,6 @@
 ---
 name: CoordinatorAgent
-model: inherit
+model: gemini-2.0-flash
 effort: high
 maxTurns: 10
 permissionMode: restricted

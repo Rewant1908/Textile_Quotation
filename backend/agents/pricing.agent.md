@@ -1,6 +1,6 @@
 ---
 name: PricingAgent
-model: inherit
+model: gemini-2.0-flash
 effort: medium
 maxTurns: 4
 permissionMode: read-only

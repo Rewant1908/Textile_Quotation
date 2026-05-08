@@ -1,6 +1,6 @@
 ---
 name: ProcurementAgent
-model: inherit
+model: gemini-2.0-flash
 effort: high
 maxTurns: 6
 permissionMode: read-only

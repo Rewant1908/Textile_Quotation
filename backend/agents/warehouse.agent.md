@@ -1,6 +1,6 @@
 ---
 name: WarehouseAgent
-model: inherit
+model: gemini-2.0-flash
 effort: low
 maxTurns: 4
 permissionMode: read-only
