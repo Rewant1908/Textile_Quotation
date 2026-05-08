@@ -16,6 +16,10 @@ const JWT_EXPIRES  = process.env.JWT_EXPIRES_IN || '8h';
 const SALT_ROUNDS  = 10;
 const emailRegex   = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// ─── Register pool on app.locals so routes/agents.js memoryManager can access
+//     the DB connection for live context injection (Phase 6: AI Memory Design)
+app.locals.db = pool;
+
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 app.use(cors({
     origin: [
