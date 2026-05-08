@@ -1,22 +1,13 @@
-# Retailer Memory — KT Impex
-<!-- scope: user | updated by: RetailerAgent -->
+# Retailer Agent Memory Template
+_scope: user | this file is the project-scope template only_
+_Per-retailer memory lives in memory/users/{username}/retailer.MEMORY.md (not committed)_
 
-## Template
-Each retailer entry follows this structure. Add new entries below.
-
----
-
-## [Shop Name] | [Market Location]
-- **retailer_id**: 
-- **preferred_categories**: 
-- **preferred_price_segment**: budget / mid / premium / mixed
-- **average_order_size**: ₹ / meters
-- **payment_pattern**: advance / on_delivery / credit_good / credit_slow / risky
-- **outstanding_balance**: ₹
-- **last_visit**: YYYY-MM-DD
-- **seasonal_notes**: 
-- **topics_last_discussed**: 
-- **agent_notes**: 
-
----
-<!-- RetailerAgent appends timestamped updates below -->
+## Retailer Preference Template
+```
+Retailer: [name]
+Preferred Categories: [list]
+Avg Order Size: [NPR amount]
+Payment Pattern: [immediate/7-day/30-day/delayed]
+Last Visit: [date]
+Notes: [any behavioral signals]
+```

@@ -1,72 +1,81 @@
-/**
- * forkRunner.js
- * Parallel fork pattern for multi-agent procurement queries.
- * All fork children receive byte-identical context prefixes → shared API cache hits.
- * Mirrors the forkSubagent.ts pattern from Claude Code.
- */
+// forkRunner.js — Parallel fork engine for multi-agent procurement queries
+// Phase 4: Technical Foundation
+//
+// Fires Inventory + Procurement + Pricing agents simultaneously via Promise.all().
+// Anti-recursive guard: sets _FORK_CHILD=true so fork children cannot spawn further forks.
 
-import { runAgent } from './agentRunner.js';
+import { runAgent } from './agentRunner.js'
 
 /**
- * Run multiple agents in parallel with a shared context prefix.
- * Used by the Coordinator for queries that need 2+ independent agent outputs.
+ * runProcurementFork(context, username?)
  *
- * @param {Array<{agentName: string, query: string}>} forks  - agents to run in parallel
- * @param {object} dbPool                                     - shared MariaDB pool
- * @param {string} sharedContext                              - byte-identical prefix injected into all forks
- * @returns {Promise<Array<{agentName, verdict, fullResponse, durationMs}>>}
- */
-export async function runParallelForks(forks, dbPool, sharedContext = '') {
-  if (!Array.isArray(forks) || forks.length === 0) {
-    throw new Error('forkRunner: forks array must be non-empty');
-  }
-
-  // Anti-recursive guard: fork children cannot themselves spawn forks
-  if (process.env._FORK_CHILD === '1') {
-    throw new Error('forkRunner: fork children cannot spawn further forks');
-  }
-
-  process.env._FORK_CHILD = '1';
-
-  try {
-    // Inject shared context into every fork query for cache prefix alignment
-    const forkPromises = forks.map(({ agentName, query }) => {
-      const contextualQuery = sharedContext
-        ? `## Shared Context\n${sharedContext}\n\n## Your Query\n${query}`
-        : query;
-      return runAgent(agentName, contextualQuery, dbPool);
-    });
-
-    const results = await Promise.all(forkPromises);
-    return results;
-  } finally {
-    delete process.env._FORK_CHILD;
-  }
-}
-
-/**
- * Procurement fork — the canonical parallel query for "What should we buy?"
- * Runs InventoryAgent + ProcurementAgent + PricingAgent simultaneously.
+ * Fires 3 agents in parallel with a shared context prefix:
+ *   - InventoryAgent  → which categories are low/dead?
+ *   - ProcurementAgent → which suppliers to order from?
+ *   - PricingAgent    → current margin velocities?
  *
- * @param {string} sharedContext  - e.g. current date, budget, target categories
- * @param {object} dbPool
- * @returns {Promise<{inventory, procurement, pricing, synthesis}>}
+ * Coordinator synthesizes the three verdicts into a final BUY/HOLD/AVOID decision.
  */
-export async function runProcurementFork(sharedContext, dbPool) {
-  const forks = [
-    { agentName: 'inventory',    query: 'Which categories are running low or dead? What is the current sell-through rate per category?' },
-    { agentName: 'procurement',  query: 'Which suppliers have the best quality and trend alignment right now? What should we order?' },
-    { agentName: 'pricing',      query: 'What are the current margin velocities per category? Which thans need liquidation pricing?' }
-  ];
+export async function runProcurementFork({ context = '', username = 'system' }) {
+    // Anti-recursive guard
+    if (process.env._FORK_CHILD === 'true') {
+        throw new Error('Fork children cannot spawn further forks.')
+    }
 
-  const [inventory, procurement, pricing] = await runParallelForks(forks, dbPool, sharedContext);
+    const sharedContext = [
+        `Date: ${new Date().toISOString().split('T')[0]}`,
+        `Business: KT Impex wholesale textile, Birgunj, Nepal`,
+        context,
+    ].filter(Boolean).join(' | ')
 
-  // Synthesis context for coordinator
-  const synthesis = [
-    `## Inventory Signal\n${inventory.verdict}`,
-    `## Procurement Signal\n${procurement.verdict}`,
-    `## Pricing Signal\n${pricing.verdict}`
-  ].join('\n\n');
+    // Fire all three agents simultaneously
+    const [inventoryResult, procurementResult, pricingResult] = await Promise.all([
+        runAgent({
+            agentName: 'inventory',
+            query:     'Which categories are running low or have dead stock? List them with days-without-movement.',
+            context:   sharedContext,
+            username,
+        }),
+        runAgent({
+            agentName: 'procurement',
+            query:     'Which suppliers should we order from next? Rank by quality score and trend alignment.',
+            context:   sharedContext,
+            username,
+        }),
+        runAgent({
+            agentName: 'pricing',
+            query:     'What are the current margin velocities per category? Flag any items needing liquidation pricing.',
+            context:   sharedContext,
+            username,
+        }),
+    ])
 
-  return { inventory, procurement, pricing, synthesis };
+    // Coordinator synthesis
+    const coordinatorContext = [
+        sharedContext,
+        `\nInventory Signal: ${inventoryResult.verdict || inventoryResult.fullResponse.slice(0, 300)}`,
+        `\nProcurement Signal: ${procurementResult.verdict || procurementResult.fullResponse.slice(0, 300)}`,
+        `\nPricing Signal: ${pricingResult.verdict || pricingResult.fullResponse.slice(0, 300)}`,
+    ].join('')
+
+    const coordinatorResult = await runAgent({
+        agentName: 'coordinator',
+        query:     'Synthesize the three agent signals above into a final procurement verdict per category. Format: VERDICT: BUY/HOLD/AVOID [category] — [reason]',
+        context:   coordinatorContext,
+        username,
+    })
+
+    return {
+        forks: {
+            inventory:   inventoryResult,
+            procurement: procurementResult,
+            pricing:     pricingResult,
+        },
+        coordinator: coordinatorResult,
+        totalDurationMs:
+            inventoryResult.durationMs +
+            procurementResult.durationMs +
+            pricingResult.durationMs +
+            coordinatorResult.durationMs,
+    }
 }
