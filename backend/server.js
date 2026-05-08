@@ -23,18 +23,32 @@ const app = express();
 app.locals.db = pool;
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
+// ALLOWED_ORIGIN env var must be set in Railway to your frontend URL.
+// Supports comma-separated list: https://foo.up.railway.app,https://bar.up.railway.app
+const envOrigins = process.env.ALLOWED_ORIGIN
+    ? process.env.ALLOWED_ORIGIN.split(',').map(o => o.trim()).filter(Boolean)
+    : [];
+
+const allowedOrigins = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:5174',
+    'http://127.0.0.1:5174',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5500',
+    ...envOrigins,
+];
+
 app.use(cors({
-    origin: [
-        'http://localhost:5173',
-        'http://127.0.0.1:5173',
-        'http://localhost:5174',
-        'http://127.0.0.1:5174',
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        'http://127.0.0.1:5500'
-    ],
+    origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. curl, Postman, server-to-server)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+        callback(new Error(`CORS: origin '${origin}' is not allowed. Add it to ALLOWED_ORIGIN env var.`));
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    credentials: true
+    credentials: true,
 }));
 
 app.use(express.json());
@@ -44,11 +58,11 @@ app.use('/api',              authRoutes);        // POST /api/signup, POST /api/
 app.use('/api/products',     productRoutes);     // CRUD /api/products
 app.use('/api/suppliers',    supplierRoutes);    // GET  /api/suppliers
 app.use('/api/bales',        baleRoutes);        // CRUD /api/bales + /api/bales/:id/thans
-app.use('/api',              operationsRoutes);  // GET  /api/thans, /api/operations/dashboard, /api/inventory/search, /api/admin/recalculate-speeds
+app.use('/api',              operationsRoutes);  // GET  /api/thans, /api/operations/dashboard, /api/inventory/search
 app.use('/api/retailers',    retailerRoutes);    // CRUD /api/retailers
 app.use('/api/transactions',  salesRoutes);      // CRUD /api/transactions
-app.use('/api/agents',       agentRoutes);       // POST /api/agents/chat
-app.use('/api/analytics',    analyticsRoutes);   // GET  /api/analytics/top-retailers, /api/analytics/margin-per-supplier
+app.use('/api/agents',       agentRoutes);       // POST /api/agents/query, /api/agents/procurement
+app.use('/api/analytics',    analyticsRoutes);   // GET  /api/analytics/top-retailers, margin-per-supplier, margin-per-retailer, bale-performance
 
 // ─── HEALTH ───────────────────────────────────────────────────────────────────
 app.get('/api/health', async (req, res) => {
@@ -83,4 +97,7 @@ setInterval(async () => {
 }, 24 * 60 * 60 * 1000);
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
+});
