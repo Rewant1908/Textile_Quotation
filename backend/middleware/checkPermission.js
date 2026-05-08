@@ -1,52 +1,44 @@
 /**
  * checkPermission middleware
- * Reads user_id from (in order):
- *   1. req.headers['x-user-id']  — used by GET requests that can't send a body
- *   2. req.body.user_id          — used by POST/PUT/PATCH
- *   3. req.query.user_id         — used by GET with query params
+ * Verifies JWT from Authorization: Bearer <token> header.
+ * Attaches decoded user to req.user.
  */
 
-import pool from '../db.js';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
 
 const PERMISSION_ROLES = {
-    MANAGE_PRODUCTS:          ['admin'],
-    MANAGE_QUOTATION_STATUS:  ['admin'],
-    VIEW_OPERATIONS:          ['admin'],
+    MANAGE_PRODUCTS:         ['admin'],
+    MANAGE_QUOTATION_STATUS: ['admin'],
+    VIEW_OPERATIONS:         ['admin'],
 };
 
 export function checkPermission(requiredPermission) {
-    return async (req, res, next) => {
-        const user_id =
-            req.headers['x-user-id'] ??
-            req.body?.user_id ??
-            req.query?.user_id;
-
-        if (!user_id) {
-            return res.status(401).json({ error: 'Unauthorized: user_id required' });
+    return (req, res, next) => {
+        const authHeader = req.headers['authorization'];
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: 'Unauthorized: missing or malformed token' });
         }
 
-        let conn;
+        const token = authHeader.slice(7);
+
+        let decoded;
         try {
-            conn = await pool.getConnection();
-            const [user] = await conn.query(
-                'SELECT role FROM users WHERE user_id = ?', [user_id]
-            );
-
-            if (!user) {
-                return res.status(401).json({ error: 'Unauthorized: user not found' });
-            }
-
-            const allowedRoles = PERMISSION_ROLES[requiredPermission] || [];
-            if (!allowedRoles.includes(user.role)) {
-                return res.status(403).json({ error: `Forbidden: requires ${requiredPermission}` });
-            }
-
-            next();
+            decoded = jwt.verify(token, JWT_SECRET);
         } catch (err) {
-            console.error('checkPermission error:', err);
-            res.status(500).json({ error: 'Internal server error' });
-        } finally {
-            if (conn) conn.release();
+            if (err.name === 'TokenExpiredError') {
+                return res.status(401).json({ error: 'Token expired — please log in again' });
+            }
+            return res.status(401).json({ error: 'Invalid token' });
         }
+
+        const allowedRoles = PERMISSION_ROLES[requiredPermission] || [];
+        if (!allowedRoles.includes(decoded.role)) {
+            return res.status(403).json({ error: `Forbidden: requires ${requiredPermission}` });
+        }
+
+        req.user = decoded; // { user_id, username, role, iat, exp }
+        next();
     };
 }
