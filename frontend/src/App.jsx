@@ -24,7 +24,8 @@ const ADMIN_TABS = [
     'Manage Products',
 ]
 
-const STORAGE_KEY = 'kt_impex_user'
+const STORAGE_KEY       = 'kt_impex_user'
+const TOKEN_STORAGE_KEY = 'kt_impex_token'
 
 class TabErrorBoundary extends Component {
     constructor(props) {
@@ -72,8 +73,21 @@ function App() {
     })
     const [activeTab, setActiveTab] = useState(0)
 
-    const handleLogin  = (u) => { localStorage.setItem(STORAGE_KEY, JSON.stringify(u)); setUser(u); setActiveTab(0) }
-    const handleLogout = ()  => { localStorage.removeItem(STORAGE_KEY); setUser(null); setActiveTab(0) }
+    const handleLogin = (u) => {
+        // Token is already saved in localStorage by LoginPage.handleSubmit.
+        // Here we only persist the user profile object.
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(u))
+        setUser(u)
+        setActiveTab(0)
+    }
+
+    const handleLogout = () => {
+        // Clear both the user profile and the JWT token on logout.
+        localStorage.removeItem(STORAGE_KEY)
+        localStorage.removeItem(TOKEN_STORAGE_KEY)
+        setUser(null)
+        setActiveTab(0)
+    }
 
     if (!user) return <LoginPage onLogin={handleLogin} />
 
