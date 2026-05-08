@@ -10,6 +10,7 @@ import SaleRecorder         from './components/SaleRecorder'
 import SupplierManager      from './components/SupplierManager'
 import LoginPage            from './components/LoginPage'
 import DeadStockAnalytics   from './components/DeadStockAnalytics'
+import AgentChat            from './components/AgentChat'
 import './App.css'
 
 const USER_TABS  = ['Register Dealer', 'Create Quotation', 'My Quotations']
@@ -22,6 +23,7 @@ const ADMIN_TABS = [
     'Bale Intake',
     'Quotation Requests',
     'Manage Products',
+    'AI Agents',
 ]
 
 const STORAGE_KEY = 'kt_impex_user'
@@ -74,8 +76,6 @@ function App() {
     const [activeTab, setActiveTab] = useState(0)
 
     const handleLogin = (u) => {
-        // Token already saved by LoginPage before calling this.
-        // Only persist the user profile object here.
         localStorage.setItem(STORAGE_KEY, JSON.stringify(u))
         setUser(u)
         setActiveTab(0)
@@ -131,6 +131,7 @@ function App() {
                             {activeTab === 5 && <BaleManager          user={user} />}
                             {activeTab === 6 && <QuotationHistory     user={user} />}
                             {activeTab === 7 && <AdminProductManager  user={user} />}
+                            {activeTab === 8 && <AgentChat            user={user} />}
                         </>
                     ) : (
                         <>
