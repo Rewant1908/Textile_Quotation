@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
 import pool from './db.js';
 import { checkPermission } from './middleware/checkPermission.js';
 import retailerRoutes from './routes/retailers.js';
@@ -8,6 +9,10 @@ import salesRoutes from './routes/sales.js';
 import agentRoutes from './routes/agents.js';
 
 const app = express();
+const JWT_SECRET   = process.env.JWT_SECRET   || 'CHANGE_ME_IN_PRODUCTION';
+const JWT_EXPIRES  = process.env.JWT_EXPIRES_IN || '8h';
+const SALT_ROUNDS  = 10;
+const emailRegex   = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 app.use(cors({
@@ -31,9 +36,7 @@ app.use('/api/agents', agentRoutes);
 app.use('/api/retailers', retailerRoutes);
 app.use('/api/transactions', salesRoutes);
 
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const SALT_ROUNDS = 10;
-
+// ─── HEALTH ───────────────────────────────────────────────────────────────────
 app.get('/api/health', async (req, res) => {
     let conn;
     try {
@@ -70,7 +73,7 @@ app.post('/api/signup', async (req, res) => {
     finally { if (conn) conn.release(); }
 });
 
-// ─── AUTH: LOGIN ──────────────────────────────────────────────────────────────
+// ─── AUTH: LOGIN — returns signed JWT ────────────────────────────────────────
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'username and password required' });
@@ -81,11 +84,23 @@ app.post('/api/login', async (req, res) => {
             'SELECT user_id, username, password, role FROM users WHERE username = ?', [username]
         );
         if (!user) return res.status(401).json({ error: 'Invalid username or password' });
-        // mariadb driver may return password as a Buffer — convert to string before bcrypt compare
         const hash = Buffer.isBuffer(user.password) ? user.password.toString() : String(user.password);
         const match = await bcrypt.compare(password, hash);
         if (!match) return res.status(401).json({ error: 'Invalid username or password' });
-        res.json({ success: true, user_id: user.user_id, username: user.username, role: user.role });
+
+        const token = jwt.sign(
+            { user_id: user.user_id, username: user.username, role: user.role },
+            JWT_SECRET,
+            { expiresIn: JWT_EXPIRES }
+        );
+
+        res.json({
+            success: true,
+            token,
+            user_id: user.user_id,
+            username: user.username,
+            role: user.role
+        });
     } catch (err) { res.status(500).json({ error: err.message }); }
     finally { if (conn) conn.release(); }
 });
@@ -343,6 +358,52 @@ app.get('/api/bales/:id/thans', checkPermission('VIEW_OPERATIONS'), async (req, 
     finally { if (conn) conn.release(); }
 });
 
+// ─── THANS: global search endpoint ───────────────────────────────────────────
+app.get('/api/thans', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
+    const { fabric_type, color, design, movement_speed, status, min_stock } = req.query;
+    const clauses = [];
+    const params  = [];
+
+    if (fabric_type)    { clauses.push('t.fabric_type    LIKE ?'); params.push(`%${fabric_type}%`); }
+    if (color)          { clauses.push('t.color          LIKE ?'); params.push(`%${color}%`); }
+    if (design)         { clauses.push('t.design         LIKE ?'); params.push(`%${design}%`); }
+    if (movement_speed) { clauses.push('t.movement_speed  = ?');  params.push(movement_speed); }
+    if (status)         { clauses.push('t.status          = ?');  params.push(status); }
+    if (min_stock)      { clauses.push('t.remaining_stock >= ?'); params.push(Number(min_stock)); }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+
+    let conn;
+    try {
+        conn = await pool.getConnection();
+        const rows = await conn.query(
+            `SELECT t.than_id, t.than_code, t.bale_id, t.fabric_type, t.color, t.design,
+                    t.gsm, t.meter_length, t.remaining_stock, t.cost_per_meter,
+                    t.selling_price, t.warehouse_location, t.movement_speed, t.status,
+                    ROUND(t.selling_price - t.cost_per_meter, 2) AS margin_per_meter,
+                    p.product_name, p.category,
+                    b.bale_code, b.arrival_date
+             FROM thans t
+             LEFT JOIN products p ON t.product_id = p.product_id
+             LEFT JOIN bales   b ON t.bale_id     = b.bale_id
+             ${where}
+             ORDER BY
+                CASE t.movement_speed
+                    WHEN 'fast'   THEN 0
+                    WHEN 'medium' THEN 1
+                    WHEN 'slow'   THEN 2
+                    WHEN 'new'    THEN 3
+                    WHEN 'dead'   THEN 4
+                END,
+                t.remaining_stock DESC
+             LIMIT 200`,
+            params
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+    finally { if (conn) conn.release(); }
+});
+
 // ─── OPERATIONS DASHBOARD ─────────────────────────────────────────────────────
 app.get('/api/operations/dashboard', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
     let conn;
@@ -390,22 +451,12 @@ app.get('/api/operations/dashboard', checkPermission('VIEW_OPERATIONS'), async (
 
         const deadStock = await conn.query(
             `SELECT
-                t.than_id,
-                t.than_code,
-                t.fabric_type,
-                t.color,
-                t.design,
-                t.remaining_stock,
-                t.cost_per_meter,
-                t.selling_price,
+                t.than_id, t.than_code, t.fabric_type, t.color, t.design,
+                t.remaining_stock, t.cost_per_meter, t.selling_price,
                 ROUND(t.remaining_stock * t.cost_per_meter, 2) AS cost_value,
-                t.warehouse_location,
-                t.movement_speed,
+                t.warehouse_location, t.movement_speed,
                 DATEDIFF(CURDATE(),
-                    DATE(COALESCE(
-                        MAX(im.movement_date),
-                        t.created_at
-                    ))
+                    DATE(COALESCE(MAX(im.movement_date), t.created_at))
                 ) AS days_without_movement
              FROM thans t
              LEFT JOIN inventory_movements im ON im.than_id = t.than_id
@@ -421,8 +472,7 @@ app.get('/api/operations/dashboard', checkPermission('VIEW_OPERATIONS'), async (
                     WHEN 'new'  THEN 2
                     ELSE 3
                 END,
-                days_without_movement DESC,
-                t.remaining_stock DESC
+                days_without_movement DESC, t.remaining_stock DESC
              LIMIT 15`
         );
 
@@ -430,10 +480,10 @@ app.get('/api/operations/dashboard', checkPermission('VIEW_OPERATIONS'), async (
             `SELECT
                 r.retailer_id, r.shop_name, r.market_location, r.payment_pattern,
                 r.preferred_categories, r.preferred_price_segment, r.outstanding_balance,
-                COUNT(tx.transaction_id)                           AS order_count,
-                COALESCE(SUM(tx.quantity), 0)                      AS meters_bought,
+                COUNT(tx.transaction_id)                               AS order_count,
+                COALESCE(SUM(tx.quantity), 0)                          AS meters_bought,
                 COALESCE(SUM(tx.price * tx.quantity - tx.discount), 0) AS revenue,
-                COALESCE(SUM(tx.margin), 0)                        AS margin
+                COALESCE(SUM(tx.margin), 0)                            AS margin
              FROM retailers r
              LEFT JOIN transactions tx ON r.retailer_id = tx.retailer_id
              GROUP BY
@@ -519,8 +569,14 @@ app.get('/api/inventory/search', async (req, res) => {
     finally { if (conn) conn.release(); }
 });
 
-// ─── BATCH movement_speed RECALCULATION ──────────────────────────────────────
+// ─── MOVEMENT SPEED RECALCULATION (manual trigger) ────────────────────────────
 app.post('/api/admin/recalculate-speeds', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
+    const updated = await recalculateSpeeds();
+    res.json({ success: true, updated });
+});
+
+// ─── INTERNAL: recalculate movement speeds ────────────────────────────────────
+async function recalculateSpeeds() {
     let conn;
     try {
         conn = await pool.getConnection();
@@ -537,22 +593,34 @@ app.post('/api/admin/recalculate-speeds', checkPermission('MANAGE_PRODUCTS'), as
 
         let updated = 0;
         for (const row of thans) {
-            const idle = Number(row.idle_days || 0);
+            const idle  = Number(row.idle_days  || 0);
             const sales = Number(row.sale_count || 0);
             let speed;
-            if (sales === 0)           speed = 'new';
-            else if (idle >= 90)       speed = 'dead';
-            else if (idle >= 45)       speed = 'slow';
-            else if (idle >= 14)       speed = 'medium';
-            else                        speed = 'fast';
+            if (sales === 0)     speed = 'new';
+            else if (idle >= 90) speed = 'dead';
+            else if (idle >= 45) speed = 'slow';
+            else if (idle >= 14) speed = 'medium';
+            else                 speed = 'fast';
 
             await conn.query('UPDATE thans SET movement_speed = ? WHERE than_id = ?', [speed, row.than_id]);
             updated++;
         }
-        res.json({ success: true, updated });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-    finally { if (conn) conn.release(); }
-});
+        return updated;
+    } finally { if (conn) conn.release(); }
+}
+
+// ─── CRON: auto-recalculate every day at midnight ─────────────────────────────
+// Runs purely in-process — no external cron dependency needed.
+// Interval: 24 hours (86_400_000 ms)
+const CRON_INTERVAL_MS = 24 * 60 * 60 * 1000;
+setInterval(async () => {
+    try {
+        const updated = await recalculateSpeeds();
+        console.log(`[cron] movement_speed recalculated — ${updated} thans updated`);
+    } catch (err) {
+        console.error('[cron] recalculateSpeeds failed:', err.message);
+    }
+}, CRON_INTERVAL_MS);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
