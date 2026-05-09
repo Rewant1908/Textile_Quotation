@@ -152,7 +152,8 @@ export default function LoginPage({ onLogin }) {
     const username = e.target.username.value.trim()
     const password = e.target.password.value.trim()
     const email    = isSignup ? (e.target.email?.value?.trim() || '') : ''
-    const endpoint = isSignup ? '/signup' : '/login'
+    // Fix: backend mounts auth at /api/auth/login and /api/auth/signup
+    const endpoint = isSignup ? '/auth/signup' : '/auth/login'
     const body     = isSignup ? { username, password, email } : { username, password }
     try {
       const res  = await API.post(endpoint, body)
