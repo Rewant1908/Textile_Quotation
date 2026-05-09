@@ -19,7 +19,7 @@ import salesRouter      from './routes/sales.js';
 import retailersRouter  from './routes/retailers.js';
 import suppliersRouter  from './routes/suppliers.js';
 import productsRouter   from './routes/products.js';
-import agentRouter      from './routes/agent.js';
+import agentRouter      from './routes/agents.js';
 import settingsRouter   from './routes/settings.js';
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -46,13 +46,13 @@ app.use(cors({
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, standardHeaders: true, legacyHeaders: false }));
 
 // ── Mount routes ─────────────────────────────────────────────────────────────
-app.use('/api/auth',       authRouter);
-app.use('/api',            operationsRouter);   // /api/thans, /api/dashboard, /api/inventory
-app.use('/api/transactions', salesRouter);
-app.use('/api/retailers',  retailersRouter);
-app.use('/api/suppliers',  suppliersRouter);
-app.use('/api/products',   productsRouter);
-app.use('/api/agents',     agentRouter);
+app.use('/api/auth',           authRouter);
+app.use('/api',                operationsRouter);   // /api/thans, /api/dashboard, /api/inventory
+app.use('/api/transactions',   salesRouter);
+app.use('/api/retailers',      retailersRouter);
+app.use('/api/suppliers',      suppliersRouter);
+app.use('/api/products',       productsRouter);
+app.use('/api/agents',         agentRouter);
 app.use('/api/admin/settings', settingsRouter);
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -71,7 +71,6 @@ app.use((err, _req, res, _next) => {
 async function start() {
     await connectRedis();
 
-    // Verify DB connection
     let conn;
     try {
         conn = await pool.getConnection();
@@ -86,7 +85,6 @@ async function start() {
     const { recalculateSpeeds } = await import('./routes/operations.js');
     const { flush }             = await import('./cache.js');
 
-    // Every 24h: recalculate movement speeds using the persisted threshold
     setInterval(async () => {
         try {
             const n = await recalculateSpeeds();
