@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { gsap }                        from 'gsap'
-import API                             from '../api'
+import { useNavigate }                  from 'react-router-dom'
+import { gsap }                         from 'gsap'
+import API                              from '../api'
 
 /* ── Static data ─────────────────────────────────────────────────── */
 const sampleProducts = [
@@ -127,6 +128,7 @@ function runPreloader(onDone) {
 const BRAND_LETTERS = 'KT Impex'.split('')
 
 export default function LoginPage({ onLogin }) {
+  const navigate = useNavigate()
   const [isSignup,      setIsSignup]      = useState(false)
   const [error,         setError]         = useState('')
   const [success,       setSuccess]       = useState('')
@@ -164,13 +166,14 @@ export default function LoginPage({ onLogin }) {
         if (data.token) {
           localStorage.setItem('kt_impex_token', data.token)
         }
-        // Persist user object so App.jsx can restore it on page refresh
         localStorage.setItem('kt_impex_user', JSON.stringify({
           user_id:  data.user_id,
           username: data.username,
           role:     data.role,
         }))
         onLogin({ user_id: data.user_id, username: data.username, role: data.role })
+        // Navigate to dashboard after successful login
+        navigate('/', { replace: true })
       }
     } catch (err) {
       setError(err?.response?.data?.error || 'Cannot connect to server. Is the backend running?')

@@ -5,13 +5,15 @@
  *  2. recalculateSpeeds() dead threshold changed from 90 → DEAD_DAYS (60)
  *     import DEAD_DAYS from sales.js — single source of truth across all classifiers
  *  6. POST /api/thans/:id/image — image_url upload endpoint (base64 or URL body)
+ * Fix: retailerSignals subquery now includes revenue so tx.price is not referenced directly
+ * Fix: LoginPage redirect handled in LoginPage itself via useNavigate
  */
 import express from 'express';
 import pool from '../db.js';
 import { checkPermission } from '../middleware/checkPermission.js';
 import { cache, invalidate } from '../middleware/cacheMiddleware.js';
 import { flush } from '../cache.js';
-import { DEAD_DAYS } from './sales.js';   // Phase 5 fix #2: single source of truth
+import { DEAD_DAYS } from './sales.js';
 import logger from '../logger.js';
 
 const router = express.Router();
@@ -67,8 +69,6 @@ router.get('/thans',
 );
 
 // ── POST /api/thans/:id/image ────────────────────────────────────────────────
-// Phase 5 fix #6: image_url upload endpoint — accepts { image_url: 'https://...' }
-// or a base64 data URI. The WhatsApp integration will POST the CDN URL here.
 router.post('/thans/:id/image', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
     const { image_url } = req.body;
     const thanId = Number(req.params.id);
@@ -76,7 +76,6 @@ router.post('/thans/:id/image', checkPermission('MANAGE_PRODUCTS'), async (req, 
     if (!image_url?.trim()) {
         return res.status(400).json({ error: 'image_url is required' });
     }
-    // Basic sanity: must be a URL or data URI
     const isUrl    = /^https?:\/\//i.test(image_url);
     const isBase64 = /^data:image\//i.test(image_url);
     if (!isUrl && !isBase64) {
@@ -93,7 +92,6 @@ router.post('/thans/:id/image', checkPermission('MANAGE_PRODUCTS'), async (req, 
         if (Number(result.affectedRows) === 0) {
             return res.status(404).json({ error: 'Than not found' });
         }
-        // Bust the thans cache so the new image is immediately visible
         flush('thans:*').catch(() => {});
         res.json({ success: true, than_id: thanId, image_url: image_url.trim() });
     } catch (err) {
@@ -177,17 +175,23 @@ router.get('/dashboard',
                  LIMIT 15`
             );
 
+            // Fix: subquery now includes revenue = price*quantity-discount so outer query
+            // does not reference tx.price or tx.discount (columns not on the subquery result)
             const retailerSignals = await conn.query(
                 `SELECT
                     r.retailer_id, r.shop_name, r.market_location, r.payment_pattern,
                     r.preferred_categories, r.preferred_price_segment, r.outstanding_balance,
                     r.preferred_categories_json,
-                    COUNT(tx.transaction_id)                                   AS order_count,
-                    COALESCE(SUM(tx.quantity), 0)                              AS meters_bought,
-                    COALESCE(SUM(tx.price * tx.quantity - tx.discount), 0)     AS revenue,
-                    COALESCE(SUM(tx.margin), 0)                                AS margin
+                    COUNT(tx.transaction_id)          AS order_count,
+                    COALESCE(SUM(tx.quantity), 0)      AS meters_bought,
+                    COALESCE(SUM(tx.revenue), 0)       AS revenue,
+                    COALESCE(SUM(tx.margin), 0)        AS margin
                  FROM retailers r
-                 LEFT JOIN transactions tx ON r.retailer_id = tx.retailer_id
+                 LEFT JOIN (
+                    SELECT transaction_id, retailer_id, quantity, margin,
+                           (price * quantity - COALESCE(discount, 0)) AS revenue
+                    FROM transactions
+                 ) tx ON r.retailer_id = tx.retailer_id
                  GROUP BY
                     r.retailer_id, r.shop_name, r.market_location, r.payment_pattern,
                     r.preferred_categories, r.preferred_price_segment, r.outstanding_balance,
@@ -300,7 +304,6 @@ async function recalculateSpeeds() {
             const idle  = Number(row.idle_days  || 0);
             const sales = Number(row.sale_count || 0);
             let speed;
-            // Phase 5 fix #2: was >= 90 (now DEAD_DAYS = 60, matching sales.js and DB trigger)
             if (sales === 0)           speed = 'new';
             else if (idle >= DEAD_DAYS) speed = 'dead';
             else if (idle >= 30)        speed = 'slow';
