@@ -3,14 +3,18 @@
  *
  * Phase 7: /api/admin/settings route registered
  */
-import 'dotenv/config';
+import { config } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+config({ path: join(__dirname, '.env'), quiet: true });
+
 import express       from 'express';
 import cors          from 'cors';
 import helmet        from 'helmet';
 import rateLimit     from 'express-rate-limit';
 import logger        from './logger.js';
 import pool          from './db.js';
-import { connectRedis } from './cache.js';
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 import authRouter       from './routes/auth.js';
@@ -21,6 +25,9 @@ import suppliersRouter  from './routes/suppliers.js';
 import productsRouter   from './routes/products.js';
 import agentRouter      from './routes/agents.js';
 import settingsRouter   from './routes/settings.js';
+import analyticsRouter  from './routes/analytics.js';
+import balesRouter      from './routes/bales.js';
+import quotationsRouter from './routes/quotations.js';
 
 // ── App ───────────────────────────────────────────────────────────────────────
 const app  = express();
@@ -47,7 +54,11 @@ app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, standardHeaders: true, l
 
 // ── Mount routes ─────────────────────────────────────────────────────────────
 app.use('/api/auth',           authRouter);
-app.use('/api',                operationsRouter);   // /api/thans, /api/dashboard, /api/inventory
+app.use('/api/analytics',      analyticsRouter);   // must be before /api catch-all
+app.use('/api/bales',          balesRouter);       // must be before /api catch-all
+app.use('/api/quotations',     quotationsRouter);  // must be before /api catch-all
+app.use('/api/operations',     operationsRouter);  // /api/operations/dashboard etc.
+app.use('/api',                operationsRouter);  // /api/thans, /api/dashboard, /api/inventory
 app.use('/api/transactions',   salesRouter);
 app.use('/api/retailers',      retailersRouter);
 app.use('/api/suppliers',      suppliersRouter);
@@ -69,8 +80,6 @@ app.use((err, _req, res, _next) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 async function start() {
-    await connectRedis();
-
     let conn;
     try {
         conn = await pool.getConnection();
