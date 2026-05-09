@@ -1,20 +1,29 @@
 // routes/agents.js — Express router for /api/agents/*
 // Phase 4 / Phase 6: Technical Foundation + AI Memory Design
 //
-// POST /api/agents/query                → single agent dispatch with live DB context
-// POST /api/agents/procurement          → parallel 3-agent procurement fork
-// POST /api/agents/spawn                → Issue 2: programmatic agent delegation (coordinator → sub-agent)
-// GET  /api/agents/memory/:scope        → read a specific agent memory file
-// GET  /api/agents/memory/:scope/list   → list all memory files in scope
-// PUT  /api/agents/memory/:scope        → admin: overwrite memory file  (MANAGE_SYSTEM — Issue 1 fix)
-// POST /api/agents/memory/:scope/append → admin: append to memory file  (MANAGE_SYSTEM — Issue 1 fix)
+// Phase 6 Task 1: scopeGuard applied to all memory endpoints
+//   - project-scope: everyone reads, admin writes only
+//   - user-scope: own memory only (admin can access any)
+//   - local-scope: admin only
+//
+// Endpoints:
+//   POST /api/agents/query                → single agent dispatch with live DB context
+//   POST /api/agents/procurement          → parallel 3-agent procurement fork
+//   POST /api/agents/spawn                → programmatic agent delegation
+//   GET  /api/agents/memory/:scope        → read a specific agent memory file
+//   GET  /api/agents/memory/:scope/list   → list all memory files in scope
+//   PUT  /api/agents/memory/:scope        → admin: overwrite memory file
+//   POST /api/agents/memory/:scope/append → admin: append to memory file
+//   GET  /api/agents/retailer/search      → Phase 6 Task 2: semantic retailer search
 
 import { Router }             from 'express'
-import { runAgent, spawnAgent } from '../agents/runner/agentRunner.js'  // Issue 2: import spawnAgent
+import { runAgent, spawnAgent } from '../agents/runner/agentRunner.js'
 import { runProcurementFork } from '../agents/runner/forkRunner.js'
 import { readMemory, writeMemorySnapshot, appendMemory, listMemoryFiles } from '../agents/runner/agentMemory.js'
 import { buildLiveContext }   from '../agents/runner/memoryManager.js'
 import { checkPermission }    from '../middleware/checkPermission.js'
+import { assertMemoryScope, scopeGuardMiddleware } from '../middleware/scopeGuard.js'
+import logger                 from '../logger.js'
 
 const router = Router()
 
@@ -35,14 +44,14 @@ router.post('/query', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
 
     try {
         const db = req.app.locals.db
-        const liveContext = db ? await buildLiveContext(agent, db) : ''
+        const liveContext   = db ? await buildLiveContext(agent, db) : ''
         const mergedContext = [liveContext, context || ''].filter(Boolean).join('\n\n---\n\n')
 
         const result = await runAgent({
             agentName: agent,
             query,
             context:  mergedContext,
-            username: req.user?.username || 'system',
+            username: req.user.username,   // always from JWT — never from body
         })
 
         res.json({
@@ -56,7 +65,7 @@ router.post('/query', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
             provider:     result.provider,
         })
     } catch (err) {
-        console.error('[agentRoute] query error:', err.message)
+        logger.error({ err: err.message }, '[agentRoute] query error')
         res.status(500).json({ error: err.message })
     }
 })
@@ -73,19 +82,17 @@ router.post('/procurement', checkPermission('VIEW_OPERATIONS'), async (req, res)
     try {
         const result = await runProcurementFork({
             context:  context || '',
-            username: req.user?.username || 'system',
+            username: req.user.username,
         })
         res.json(result)
     } catch (err) {
-        console.error('[agentRoute] procurement fork error:', err.message)
+        logger.error({ err: err.message }, '[agentRoute] procurement fork error')
         res.status(500).json({ error: err.message })
     }
 })
 
 // ---------------------------------------------------------------------------
-// POST /api/agents/spawn — Issue 2: programmatic agent delegation
-// Coordinator or any caller spawns a specialist sub-agent at runtime.
-// Issue 4: allowedAgentTypes from callerAgent frontmatter is enforced.
+// POST /api/agents/spawn — programmatic agent delegation
 // ---------------------------------------------------------------------------
 router.post('/spawn', checkPermission('USE_AGENTS'), async (req, res) => {
     const { callerAgent, targetAgent, query, context } = req.body
@@ -101,7 +108,7 @@ router.post('/spawn', checkPermission('USE_AGENTS'), async (req, res) => {
 
     try {
         const db = req.app.locals.db
-        const liveContext = db ? await buildLiveContext(targetAgent, db) : ''
+        const liveContext   = db ? await buildLiveContext(targetAgent, db) : ''
         const mergedContext = [liveContext, context || ''].filter(Boolean).join('\n\n---\n\n')
 
         const result = await spawnAgent({
@@ -109,7 +116,7 @@ router.post('/spawn', checkPermission('USE_AGENTS'), async (req, res) => {
             targetAgentName: targetAgent,
             query,
             context:  mergedContext,
-            username: req.user?.username || 'system',
+            username: req.user.username,
         })
 
         res.json({
@@ -123,94 +130,129 @@ router.post('/spawn', checkPermission('USE_AGENTS'), async (req, res) => {
             provider:    result.provider,
         })
     } catch (err) {
-        // allowedAgentTypes violations come through as errors here
         const status = err.message.includes('not permitted') ? 403 : 500
-        console.error('[agentRoute] spawn error:', err.message)
+        logger.error({ err: err.message }, '[agentRoute] spawn error')
         res.status(status).json({ error: err.message })
     }
 })
 
 // ---------------------------------------------------------------------------
+// GET /api/agents/retailer/search — Phase 6 Task 2: semantic retailer search
+// (declared before /:scope routes to avoid Express treating 'retailer' as scope)
+// ---------------------------------------------------------------------------
+router.get('/retailer/search', checkPermission('USE_AGENTS'), async (req, res) => {
+    const { q, limit = '5' } = req.query
+    if (!q?.trim()) return res.status(400).json({ error: 'q (query) is required' })
+
+    try {
+        // Dynamic import so the service only loads if the route is hit
+        const { searchRetailers } = await import('../services/embeddingService.js')
+        const results = await searchRetailers(q.trim(), parseInt(limit, 10))
+        res.json({ query: q, results })
+    } catch (err) {
+        logger.error({ err: err.message }, '[agentRoute] retailer search error')
+        res.status(500).json({ error: err.message })
+    }
+})
+
+// ---------------------------------------------------------------------------
 // GET /api/agents/memory/:scope — read a specific agent memory file
+// Phase 6 Task 1: scopeGuard enforced
 // ---------------------------------------------------------------------------
-router.get('/memory/:scope', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
-    const { scope } = req.params
-    const { agent = 'inventory' } = req.query
+router.get(
+    '/memory/:scope',
+    checkPermission('VIEW_OPERATIONS'),
+    scopeGuardMiddleware('READ'),
+    async (req, res) => {
+        const { scope }             = req.params
+        const { agent = 'inventory' } = req.query
+        const username              = req.resolvedMemoryUsername
 
-    if (!['project', 'user', 'local'].includes(scope))
-        return res.status(400).json({ error: 'scope must be project, user, or local' })
-    if (!VALID_AGENTS.includes(agent))
-        return res.status(400).json({ error: `Unknown agent. Valid: ${VALID_AGENTS.join(', ')}` })
+        if (!VALID_AGENTS.includes(agent))
+            return res.status(400).json({ error: `Unknown agent. Valid: ${VALID_AGENTS.join(', ')}` })
 
-    try {
-        const content = await readMemory(scope, agent, req.user?.username || 'system')
-        res.json({ scope, agent, content: content || '(no memory yet)' })
-    } catch (err) {
-        res.status(500).json({ error: err.message })
+        try {
+            const content = await readMemory(scope, agent, username)
+            res.json({ scope, agent, username, content: content || '(no memory yet)' })
+        } catch (err) {
+            res.status(500).json({ error: err.message })
+        }
     }
-})
+)
 
 // ---------------------------------------------------------------------------
-// GET /api/agents/memory/:scope/list — list all memory files in scope
+// GET /api/agents/memory/:scope/list
+// Phase 6 Task 1: scopeGuard enforced
 // ---------------------------------------------------------------------------
-router.get('/memory/:scope/list', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
-    const { scope } = req.params
+router.get(
+    '/memory/:scope/list',
+    checkPermission('VIEW_OPERATIONS'),
+    scopeGuardMiddleware('READ'),
+    async (req, res) => {
+        const { scope }  = req.params
+        const username   = req.resolvedMemoryUsername
 
-    if (!['project', 'user', 'local'].includes(scope))
-        return res.status(400).json({ error: 'scope must be project, user, or local' })
-
-    try {
-        const files = await listMemoryFiles(scope, req.user?.username || 'system')
-        res.json({ scope, files })
-    } catch (err) {
-        res.status(500).json({ error: err.message })
+        try {
+            const files = await listMemoryFiles(scope, username)
+            res.json({ scope, username, files })
+        } catch (err) {
+            res.status(500).json({ error: err.message })
+        }
     }
-})
+)
 
 // ---------------------------------------------------------------------------
-// PUT /api/agents/memory/:scope — admin: overwrite a memory file
-// Issue 1 fix: MANAGE_SYSTEM is now defined in checkPermission.js
+// PUT /api/agents/memory/:scope — overwrite a memory file
+// Phase 6 Task 1: scopeGuard enforced (project = admin-write only)
 // ---------------------------------------------------------------------------
-router.put('/memory/:scope', checkPermission('MANAGE_SYSTEM'), async (req, res) => {
-    const { scope } = req.params
-    const { agent, content } = req.body
+router.put(
+    '/memory/:scope',
+    checkPermission('MANAGE_SYSTEM'),
+    scopeGuardMiddleware('WRITE'),
+    async (req, res) => {
+        const { scope }        = req.params
+        const { agent, content } = req.body
+        const username         = req.resolvedMemoryUsername
 
-    if (!['project', 'user', 'local'].includes(scope))
-        return res.status(400).json({ error: 'scope must be project, user, or local' })
-    if (!agent || !VALID_AGENTS.includes(agent))
-        return res.status(400).json({ error: `agent required. Valid: ${VALID_AGENTS.join(', ')}` })
-    if (typeof content !== 'string')
-        return res.status(400).json({ error: 'content must be a string' })
+        if (!agent || !VALID_AGENTS.includes(agent))
+            return res.status(400).json({ error: `agent required. Valid: ${VALID_AGENTS.join(', ')}` })
+        if (typeof content !== 'string')
+            return res.status(400).json({ error: 'content must be a string' })
 
-    try {
-        await writeMemorySnapshot(scope, agent, req.user?.username || 'system', content)
-        res.json({ ok: true, scope, agent, bytesWritten: Buffer.byteLength(content, 'utf-8') })
-    } catch (err) {
-        res.status(500).json({ error: err.message })
+        try {
+            await writeMemorySnapshot(scope, agent, username, content)
+            res.json({ ok: true, scope, agent, username, bytesWritten: Buffer.byteLength(content, 'utf-8') })
+        } catch (err) {
+            res.status(500).json({ error: err.message })
+        }
     }
-})
+)
 
 // ---------------------------------------------------------------------------
-// POST /api/agents/memory/:scope/append — admin: append to a memory file
-// Issue 1 fix: MANAGE_SYSTEM is now defined in checkPermission.js
+// POST /api/agents/memory/:scope/append
+// Phase 6 Task 1: scopeGuard enforced
 // ---------------------------------------------------------------------------
-router.post('/memory/:scope/append', checkPermission('MANAGE_SYSTEM'), async (req, res) => {
-    const { scope } = req.params
-    const { agent, content } = req.body
+router.post(
+    '/memory/:scope/append',
+    checkPermission('MANAGE_SYSTEM'),
+    scopeGuardMiddleware('WRITE'),
+    async (req, res) => {
+        const { scope }        = req.params
+        const { agent, content } = req.body
+        const username         = req.resolvedMemoryUsername
 
-    if (!['project', 'user', 'local'].includes(scope))
-        return res.status(400).json({ error: 'scope must be project, user, or local' })
-    if (!agent || !VALID_AGENTS.includes(agent))
-        return res.status(400).json({ error: `agent required. Valid: ${VALID_AGENTS.join(', ')}` })
-    if (typeof content !== 'string')
-        return res.status(400).json({ error: 'content must be a string' })
+        if (!agent || !VALID_AGENTS.includes(agent))
+            return res.status(400).json({ error: `agent required. Valid: ${VALID_AGENTS.join(', ')}` })
+        if (typeof content !== 'string')
+            return res.status(400).json({ error: 'content must be a string' })
 
-    try {
-        await appendMemory(scope, agent, req.user?.username || 'system', content)
-        res.json({ ok: true, scope, agent, appended: true })
-    } catch (err) {
-        res.status(500).json({ error: err.message })
+        try {
+            await appendMemory(scope, agent, username, content)
+            res.json({ ok: true, scope, agent, username, appended: true })
+        } catch (err) {
+            res.status(500).json({ error: err.message })
+        }
     }
-})
+)
 
 export default router
