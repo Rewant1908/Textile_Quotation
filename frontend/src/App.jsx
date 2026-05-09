@@ -1,169 +1,189 @@
-// App.jsx — KT IMPEX root component
-// Phase 4 Issue 2 fix: listens for 'kt:session-expired' event dispatched by api.js
-// when any API call returns 401. Shows a visible banner and redirects to login
-// after 3 seconds so the user is never left in a broken/empty state.
-
-import { useState, useEffect } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
-import LoginPage            from './components/LoginPage'
-import Dashboard            from './components/OperationsDashboard'
-import Products             from './components/ProductCatalogue'
-import Suppliers            from './components/SupplierManager'
-import Retailers            from './components/RetailerManager'
-import Sales                from './components/SaleRecorder'
-import Quotations           from './components/QuotationHistory'
-import QuotationForm        from './components/QuotationForm'
-import Analytics            from './components/AnalyticsDashboard'
-import AgentChat            from './components/AgentChat'
-import BaleManager          from './components/BaleManager'
-import AdminProductManager  from './components/AdminProductManager'
+import { useState, useEffect, Component } from 'react'
 import CustomerForm         from './components/CustomerForm'
+import QuotationForm        from './components/QuotationForm'
+import QuotationHistory     from './components/QuotationHistory'
+import AdminProductManager  from './components/AdminProductManager'
+import OperationsDashboard  from './components/OperationsDashboard'
+import BaleManager          from './components/BaleManager'
+import RetailerManager      from './components/RetailerManager'
+import SaleRecorder         from './components/SaleRecorder'
+import SupplierManager      from './components/SupplierManager'
+import LoginPage            from './components/LoginPage'
 import DeadStockAnalytics   from './components/DeadStockAnalytics'
+import AgentChat            from './components/AgentChat'
 import WarehouseIntelligence from './components/WarehouseIntelligence'
+import AnalyticsDashboard   from './components/AnalyticsDashboard'
+import './App.css'
 
-// ── Session-expired banner component ───────────────────────────────────────────────
-function SessionExpiredBanner({ onDismiss }) {
-    return (
-        <div style={{
-            position:   'fixed',
-            top:        0,
-            left:       0,
-            right:      0,
-            zIndex:     9999,
-            background: '#b91c1c',
-            color:      '#fff',
-            padding:    '14px 24px',
-            display:    'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            fontFamily: 'sans-serif',
-            fontSize:   '15px',
-            boxShadow:  '0 2px 8px rgba(0,0,0,0.25)',
-        }}>
-            <span>⚠️ Your session has expired. Redirecting to login…</span>
-            <button
-                onClick={onDismiss}
-                style={{ background: 'none', border: '1px solid #fff', color: '#fff',
-                         padding: '4px 12px', borderRadius: '4px', cursor: 'pointer' }}
-            >
-                Dismiss
-            </button>
-        </div>
-    )
+const USER_TABS  = ['Register Dealer', 'Create Quotation', 'My Quotations']
+const ADMIN_TABS = [
+    'Operations',
+    'Dead Stock',
+    'Analytics',
+    'Record Sale',
+    'Retailers',
+    'Suppliers',
+    'Bale Intake',
+    'Quotation Requests',
+    'Manage Products',
+    'AI Agents',
+    'Warehouse AI',
+]
+
+const STORAGE_KEY = 'kt_impex_user'
+const TOKEN_KEY   = 'kt_impex_token'
+
+class TabErrorBoundary extends Component {
+    constructor(props) {
+        super(props)
+        this.state = { hasError: false, error: null }
+    }
+    static getDerivedStateFromError(error) {
+        return { hasError: true, error }
+    }
+    componentDidCatch(error, info) {
+        console.error('Tab render error:', error, info)
+    }
+    componentDidUpdate(prevProps) {
+        if (prevProps.tabKey !== this.props.tabKey) {
+            this.setState({ hasError: false, error: null })
+        }
+    }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div style={{ padding: '2rem', maxWidth: 600, margin: '0 auto' }}>
+                    <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '1.5rem' }}>
+                        <h3 style={{ color: '#b91c1c', marginBottom: '0.5rem' }}>Something went wrong loading this tab</h3>
+                        <p style={{ color: '#7f1d1d', fontSize: 14, marginBottom: '1rem' }}>
+                            {this.state.error?.message || 'Unknown error'}
+                        </p>
+                        <button className="btn btn-primary"
+                            onClick={() => this.setState({ hasError: false, error: null })}>
+                            Try again
+                        </button>
+                    </div>
+                </div>
+            )
+        }
+        return this.props.children
+    }
 }
 
-// ── Auth guard ────────────────────────────────────────────────────────────────────────────
-function RequireAuth({ children }) {
-    const token = localStorage.getItem('kt_impex_token')
-    if (!token) return <Navigate to="/login" replace />
-    return children
-}
-
-// ── Inner app (needs useNavigate — must be inside <Router>) ───────────────────────────────
-function AppInner() {
-    const navigate = useNavigate()
-    const [sessionExpired, setSessionExpired] = useState(false)
-
-    // Read persisted user on mount (survives page refresh)
+function App() {
     const [user, setUser] = useState(() => {
         try {
-            return JSON.parse(localStorage.getItem('kt_impex_user')) || null
-        } catch {
-            return null
-        }
+            const saved = localStorage.getItem(STORAGE_KEY)
+            return saved ? JSON.parse(saved) : null
+        } catch { return null }
     })
+    const [activeTab, setActiveTab]       = useState(0)
+    const [sessionExpired, setSessionExpired] = useState(false)
 
-    const handleLogin = (userData) => {
-        setUser(userData)
+    const handleLogin = (u) => {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(u))
+        setUser(u)
+        setActiveTab(0)
     }
 
-    const clearSession = () => {
-        localStorage.removeItem('kt_impex_token')
-        localStorage.removeItem('kt_impex_user')
+    const handleLogout = () => {
+        localStorage.removeItem(STORAGE_KEY)
+        localStorage.removeItem(TOKEN_KEY)
         setUser(null)
+        setActiveTab(0)
     }
 
+    // Listen for 401 / session-expired events dispatched by api.js
     useEffect(() => {
         const handleExpiry = () => {
             setSessionExpired(true)
             setTimeout(() => {
                 setSessionExpired(false)
-                clearSession()
-                navigate('/login', { replace: true })
+                handleLogout()
             }, 3000)
         }
         window.addEventListener('kt:session-expired', handleExpiry)
         return () => window.removeEventListener('kt:session-expired', handleExpiry)
-    }, [navigate])
+    }, [])
+
+    if (!user) return <LoginPage onLogin={handleLogin} />
+
+    const isAdmin = user.role === 'admin'
+    const tabs    = isAdmin ? ADMIN_TABS : USER_TABS
 
     return (
-        <>
+        <div className="app">
             {sessionExpired && (
-                <SessionExpiredBanner onDismiss={() => {
-                    setSessionExpired(false)
-                    clearSession()
-                    navigate('/login', { replace: true })
-                }} />
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+                    background: '#b91c1c', color: '#fff', padding: '14px 24px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    fontFamily: 'sans-serif', fontSize: '15px', boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+                }}>
+                    <span>⚠️ Your session has expired. Redirecting to login…</span>
+                    <button onClick={() => { setSessionExpired(false); handleLogout() }}
+                        style={{ background: 'none', border: '1px solid #fff', color: '#fff',
+                                 padding: '4px 12px', borderRadius: '4px', cursor: 'pointer' }}>
+                        Dismiss
+                    </button>
+                </div>
             )}
-            <Routes>
-                {/* Public */}
-                <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
 
-                {/* Protected */}
-                <Route path="/" element={
-                    <RequireAuth><Dashboard user={user} /></RequireAuth>
-                } />
-                <Route path="/products" element={
-                    <RequireAuth><Products user={user} /></RequireAuth>
-                } />
-                <Route path="/admin/products" element={
-                    <RequireAuth><AdminProductManager user={user} /></RequireAuth>
-                } />
-                <Route path="/suppliers" element={
-                    <RequireAuth><Suppliers user={user} /></RequireAuth>
-                } />
-                <Route path="/retailers" element={
-                    <RequireAuth><Retailers user={user} /></RequireAuth>
-                } />
-                <Route path="/retailers/new" element={
-                    <RequireAuth><CustomerForm user={user} /></RequireAuth>
-                } />
-                <Route path="/sales" element={
-                    <RequireAuth><Sales user={user} /></RequireAuth>
-                } />
-                <Route path="/quotations" element={
-                    <RequireAuth><Quotations user={user} /></RequireAuth>
-                } />
-                <Route path="/quotations/new" element={
-                    <RequireAuth><QuotationForm user={user} /></RequireAuth>
-                } />
-                <Route path="/analytics" element={
-                    <RequireAuth><Analytics user={user} /></RequireAuth>
-                } />
-                <Route path="/analytics/deadstock" element={
-                    <RequireAuth><DeadStockAnalytics user={user} /></RequireAuth>
-                } />
-                <Route path="/warehouse" element={
-                    <RequireAuth><WarehouseIntelligence user={user} /></RequireAuth>
-                } />
-                <Route path="/bales" element={
-                    <RequireAuth><BaleManager user={user} /></RequireAuth>
-                } />
-                <Route path="/agent-chat" element={
-                    <RequireAuth><AgentChat user={user} /></RequireAuth>
-                } />
+            <header className="navbar">
+                <div className="brand">
+                    <span className="brand-mark">KT</span>
+                    <span className="brand-copy">
+                        <span className="brand-name">KT Impex</span>
+                        <span className="brand-sub">Premium Textile Wholesale</span>
+                    </span>
+                </div>
+                <div className="userbar">
+                    <span className="user-pill">{isAdmin ? 'Admin' : 'Dealer'}: {user.username}</span>
+                    <button className="btn btn-logout" onClick={handleLogout}>Logout</button>
+                </div>
+            </header>
 
-                {/* Fallback */}
-                <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-        </>
+            <nav className="tabs">
+                {tabs.map((tab, i) => (
+                    <button key={i}
+                        className={`tab-btn ${activeTab === i ? 'active' : ''}`}
+                        onClick={() => setActiveTab(i)}>
+                        {tab}
+                    </button>
+                ))}
+            </nav>
+
+            <main className="content">
+                <TabErrorBoundary tabKey={activeTab}>
+                    {isAdmin ? (
+                        <>
+                            {activeTab === 0  && <OperationsDashboard   user={user} />}
+                            {activeTab === 1  && <DeadStockAnalytics    user={user} />}
+                            {activeTab === 2  && <AnalyticsDashboard    user={user} />}
+                            {activeTab === 3  && <SaleRecorder          user={user} />}
+                            {activeTab === 4  && <RetailerManager       user={user} />}
+                            {activeTab === 5  && <SupplierManager       user={user} />}
+                            {activeTab === 6  && <BaleManager           user={user} />}
+                            {activeTab === 7  && <QuotationHistory      user={user} />}
+                            {activeTab === 8  && <AdminProductManager   user={user} />}
+                            {activeTab === 9  && <AgentChat             user={user} />}
+                            {activeTab === 10 && <WarehouseIntelligence user={user} />}
+                        </>
+                    ) : (
+                        <>
+                            {activeTab === 0 && <CustomerForm />}
+                            {activeTab === 1 && <QuotationForm    user={user} />}
+                            {activeTab === 2 && <QuotationHistory user={user} />}
+                        </>
+                    )}
+                </TabErrorBoundary>
+            </main>
+
+            <footer className="footer">
+                <p>KT Impex, Birgunj, Nepal | Dealer quotation and factory sourcing portal</p>
+            </footer>
+        </div>
     )
 }
 
-export default function App() {
-    return (
-        <Router>
-            <AppInner />
-        </Router>
-    )
-}
+export default App
