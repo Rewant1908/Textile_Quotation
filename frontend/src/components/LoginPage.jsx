@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate }                  from 'react-router-dom'
 import { gsap }                         from 'gsap'
 import API                              from '../api'
 
@@ -128,7 +127,6 @@ function runPreloader(onDone) {
 const BRAND_LETTERS = 'KT Impex'.split('')
 
 export default function LoginPage({ onLogin }) {
-  const navigate = useNavigate()
   const [isSignup,      setIsSignup]      = useState(false)
   const [error,         setError]         = useState('')
   const [success,       setSuccess]       = useState('')
@@ -172,8 +170,6 @@ export default function LoginPage({ onLogin }) {
           role:     data.role,
         }))
         onLogin({ user_id: data.user_id, username: data.username, role: data.role })
-        // Navigate to dashboard after successful login
-        navigate('/', { replace: true })
       }
     } catch (err) {
       setError(err?.response?.data?.error || 'Cannot connect to server. Is the backend running?')
