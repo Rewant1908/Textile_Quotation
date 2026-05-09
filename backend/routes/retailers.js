@@ -4,8 +4,13 @@
  * Phase 5 fixes applied:
  *  3. preferred_categories_json now returned in GET / and GET /:id
  *  7. Soft deletes: DELETE now sets is_deleted=1 + deleted_at instead of hard-DELETE
- *     GET queries filter WHERE r.is_deleted = 0 (or IS NULL for old rows)
  *  9. assigned_user_id FK: salespeople filter to their own retailers unless admin
+ *
+ * Column name mapping (route → DB):
+ *   owner_name    → contact_person
+ *   contact_phone → phone
+ *   city          → N/A (not in schema)
+ *   credit_limit  → N/A (not in schema)
  */
 import { Router } from 'express';
 import pool from '../db.js';
@@ -30,13 +35,15 @@ router.get('/', checkPermission('VIEW_RETAILERS'), async (req, res) => {
         const userParam  = isAdmin ? [] : [req.user.user_id];
 
         const rows = await conn.query(
-            `SELECT r.retailer_id, r.shop_name, r.owner_name, r.contact_phone,
-                    r.market_location, r.city, r.payment_pattern,
+            `SELECT r.retailer_id, r.shop_name,
+                    r.contact_person, r.phone,
+                    r.market_location, r.payment_pattern,
                     r.preferred_categories, r.preferred_price_segment,
                     r.preferred_categories_json,
-                    r.outstanding_balance, r.credit_limit,
+                    r.outstanding_balance,
+                    r.average_order_size, r.seasonal_trends, r.notes,
                     r.assigned_user_id,
-                    u.name AS assigned_to,
+                    u.username AS assigned_to,
                     r.created_at
              FROM retailers r
              LEFT JOIN users u ON u.user_id = r.assigned_user_id
@@ -64,8 +71,7 @@ router.get('/:id', checkPermission('VIEW_RETAILERS'), async (req, res) => {
         conn = await pool.getConnection();
         const [retailer] = await conn.query(
             `SELECT r.*,
-                    r.preferred_categories_json,
-                    u.name AS assigned_to
+                    u.username AS assigned_to
              FROM retailers r
              LEFT JOIN users u ON u.user_id = r.assigned_user_id
              WHERE r.retailer_id = ? AND ${SOFT_DELETE_FILTER}`,
@@ -84,9 +90,9 @@ router.get('/:id', checkPermission('VIEW_RETAILERS'), async (req, res) => {
 // ── POST /api/retailers ─────────────────────────────────────────────────────
 router.post('/', checkPermission('CREATE_RETAILER'), async (req, res) => {
     const {
-        shop_name, owner_name, contact_phone, market_location, city,
+        shop_name, contact_person, phone, market_location,
         payment_pattern, preferred_categories, preferred_price_segment,
-        credit_limit, assigned_user_id
+        outstanding_balance, assigned_user_id, notes
     } = req.body;
 
     if (!shop_name?.trim()) return res.status(400).json({ error: 'shop_name is required' });
@@ -96,17 +102,21 @@ router.post('/', checkPermission('CREATE_RETAILER'), async (req, res) => {
         conn = await pool.getConnection();
         const result = await conn.query(
             `INSERT INTO retailers
-                (shop_name, owner_name, contact_phone, market_location, city,
+                (shop_name, contact_person, phone, market_location,
                  payment_pattern, preferred_categories, preferred_price_segment,
-                 credit_limit, assigned_user_id)
+                 outstanding_balance, assigned_user_id, notes)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                shop_name.trim(), owner_name?.trim() || null,
-                contact_phone?.trim() || null, market_location?.trim() || null,
-                city?.trim() || null, payment_pattern || 'cash',
-                preferred_categories || null, preferred_price_segment || null,
-                credit_limit || 0,
-                assigned_user_id || req.user.user_id
+                shop_name.trim(),
+                contact_person?.trim() || null,
+                phone?.trim() || null,
+                market_location?.trim() || null,
+                payment_pattern || 'on_delivery',
+                preferred_categories || null,
+                preferred_price_segment || 'mixed',
+                outstanding_balance || 0,
+                assigned_user_id || req.user.user_id,
+                notes?.trim() || null
             ]
         );
         res.status(201).json({ success: true, retailer_id: Number(result.insertId) });
@@ -119,9 +129,9 @@ router.post('/', checkPermission('CREATE_RETAILER'), async (req, res) => {
 // ── PUT /api/retailers/:id ────────────────────────────────────────────────────
 router.put('/:id', checkPermission('UPDATE_RETAILER'), async (req, res) => {
     const {
-        shop_name, owner_name, contact_phone, market_location, city,
+        shop_name, contact_person, phone, market_location,
         payment_pattern, preferred_categories, preferred_price_segment,
-        credit_limit, outstanding_balance, assigned_user_id
+        outstanding_balance, assigned_user_id, notes
     } = req.body;
 
     let conn;
@@ -130,23 +140,22 @@ router.put('/:id', checkPermission('UPDATE_RETAILER'), async (req, res) => {
         await conn.query(
             `UPDATE retailers SET
                 shop_name              = COALESCE(?, shop_name),
-                owner_name             = COALESCE(?, owner_name),
-                contact_phone          = COALESCE(?, contact_phone),
+                contact_person         = COALESCE(?, contact_person),
+                phone                  = COALESCE(?, phone),
                 market_location        = COALESCE(?, market_location),
-                city                   = COALESCE(?, city),
                 payment_pattern        = COALESCE(?, payment_pattern),
                 preferred_categories   = COALESCE(?, preferred_categories),
                 preferred_price_segment= COALESCE(?, preferred_price_segment),
-                credit_limit           = COALESCE(?, credit_limit),
                 outstanding_balance    = COALESCE(?, outstanding_balance),
-                assigned_user_id       = COALESCE(?, assigned_user_id)
+                assigned_user_id       = COALESCE(?, assigned_user_id),
+                notes                  = COALESCE(?, notes)
              WHERE retailer_id = ? AND ${SOFT_DELETE_FILTER_NO_ALIAS}`,
             [
-                shop_name || null, owner_name || null, contact_phone || null,
-                market_location || null, city || null, payment_pattern || null,
+                shop_name || null, contact_person || null, phone || null,
+                market_location || null, payment_pattern || null,
                 preferred_categories || null, preferred_price_segment || null,
-                credit_limit ?? null, outstanding_balance ?? null,
-                assigned_user_id || null,
+                outstanding_balance ?? null, assigned_user_id || null,
+                notes || null,
                 req.params.id
             ]
         );
