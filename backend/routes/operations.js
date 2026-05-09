@@ -17,7 +17,7 @@ import logger from '../logger.js';
 
 const router = express.Router();
 
-// ── GET /api/thans ─────────────────────────────────────────────────────────────
+// ── GET /api/thans ────────────────────────────────────────────────────────────────────────────────
 router.get('/thans',
     checkPermission('VIEW_OPERATIONS'),
     cache((req) => `thans:${JSON.stringify(req.query)}`, 30),
@@ -67,7 +67,7 @@ router.get('/thans',
     }
 );
 
-// ── POST /api/thans/:id/image ────────────────────────────────────────────────
+// ── POST /api/thans/:id/image ─────────────────────────────────────────────────────────
 router.post('/thans/:id/image', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
     const { image_url } = req.body;
     const thanId = Number(req.params.id);
@@ -92,7 +92,7 @@ router.post('/thans/:id/image', checkPermission('MANAGE_PRODUCTS'), async (req, 
     } finally { if (conn) conn.release(); }
 });
 
-// ── GET /api/operations/dashboard ────────────────────────────────────────────
+// ── GET /api/operations/dashboard ───────────────────────────────────────────────────────────
 router.get('/dashboard',
     checkPermission('VIEW_OPERATIONS'),
     cache('dashboard', 60),
@@ -269,8 +269,10 @@ function computeRolling(rows) {
     return result;
 }
 
-// ── GET /api/inventory/search ─────────────────────────────────────────────────
-router.get('/inventory/search', async (req, res) => {
+// ── GET /api/inventory/search ────────────────────────────────────────────────────────────────────
+// server.js mounts this router at /api/inventory — so Express strips that prefix.
+// The route must be /search (not /inventory/search) to match /api/inventory/search.
+router.get('/search', async (req, res) => {
     const q        = String(req.query.q || '').trim();
     const maxPrice = req.query.max_price ? Number(req.query.max_price) : null;
     const params   = [];
@@ -307,7 +309,7 @@ router.get('/inventory/search', async (req, res) => {
     finally { if (conn) conn.release(); }
 });
 
-// ── POST /api/admin/recalculate-speeds ────────────────────────────────────────
+// ── POST /api/admin/recalculate-speeds ─────────────────────────────────────────────────────────────
 router.post('/admin/recalculate-speeds', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
     const updated = await recalculateSpeeds();
     flush('thans:*').catch(() => {});
