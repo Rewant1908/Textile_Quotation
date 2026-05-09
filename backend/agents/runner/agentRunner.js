@@ -1,5 +1,6 @@
 // agentRunner.js — Core agent lifecycle
 // Phase 4 / Phase 6: Technical Foundation + AI Memory Design
+// Phase 10: validateStructuredVerdict() exported for integration tests and spawn route
 //
 // Memory update protocol:
 //   Agent response MAY contain a block delimited by:
@@ -21,6 +22,11 @@
 //
 // Phase 4 fix — Issue 4:
 //   All console.log / console.error replaced with structured pino logger.
+//
+// Phase 10:
+//   validateStructuredVerdict(text) — parses any agent response for a single
+//   BUY/HOLD/AVOID token. Returns { valid, action, category, reason }.
+//   Used by integration tests and downstream callers of spawnAgent().
 
 import { readFile }              from 'fs/promises'
 import { resolve, dirname }      from 'path'
@@ -161,6 +167,36 @@ function extractVerdict(responseText) {
         if (match) return match[1].trim()
     }
     return null
+}
+
+// ── Phase 10: validateStructuredVerdict ──────────────────────────────────────
+
+/**
+ * validateStructuredVerdict(text)
+ *
+ * Parses a single-agent response for a structured BUY/HOLD/AVOID verdict.
+ * Intended for integration tests and the spawn route to validate that
+ * agents return machine-readable decisions when instructed to do so.
+ *
+ * Matches patterns like:
+ *   VERDICT: BUY Cotton — margins strong
+ *   VERDICT: HOLD Polyester - stable
+ *   VERDICT: AVOID Silk — dead stock
+ *
+ * @param {string} text — agent fullResponse text
+ * @returns {{ valid: boolean, action: string|null, category: string|null, reason: string|null }}
+ */
+export function validateStructuredVerdict(text) {
+    const match = text.match(
+        /VERDICT:\s*(BUY|HOLD|AVOID)\s+([\w\s]+?)\s*[-–—]\s*(.+)/i
+    )
+    if (!match) return { valid: false, action: null, category: null, reason: null }
+    return {
+        valid:    true,
+        action:   match[1].toUpperCase(),
+        category: match[2].trim(),
+        reason:   match[3].trim(),
+    }
 }
 
 // ── Core runner ───────────────────────────────────────────────────────────────
