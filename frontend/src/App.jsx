@@ -15,23 +15,19 @@ import WarehouseIntelligence from './components/WarehouseIntelligence'
 import AnalyticsDashboard   from './components/AnalyticsDashboard'
 import './App.css'
 
-const USER_TABS  = [
-    { label: 'Register Dealer',  icon: '👤' },
-    { label: 'Create Quotation', icon: '📋' },
-    { label: 'My Quotations',    icon: '📄' },
-]
+const USER_TABS  = ['Register Dealer', 'Create Quotation', 'My Quotations']
 const ADMIN_TABS = [
-    { label: 'Operations',         icon: '⚡' },
-    { label: 'Dead Stock',         icon: '📦' },
-    { label: 'Analytics',          icon: '📊' },
-    { label: 'Record Sale',        icon: '💰' },
-    { label: 'Retailers',          icon: '🏪' },
-    { label: 'Suppliers',          icon: '🏭' },
-    { label: 'Bale Intake',        icon: '🪡' },
-    { label: 'Quotation Requests', icon: '📝' },
-    { label: 'Manage Products',    icon: '🗂️' },
-    { label: 'AI Agents',          icon: '🤖' },
-    { label: 'Warehouse AI',       icon: '🧠' },
+    'Operations',
+    'Dead Stock',
+    'Analytics',
+    'Record Sale',
+    'Retailers',
+    'Suppliers',
+    'Bale Intake',
+    'Quotation Requests',
+    'Manage Products',
+    'AI Agents',
+    'Warehouse AI',
 ]
 
 const STORAGE_KEY = 'kt_impex_user'
@@ -57,12 +53,9 @@ class TabErrorBoundary extends Component {
         if (this.state.hasError) {
             return (
                 <div style={{ padding: '2rem', maxWidth: 600, margin: '0 auto' }}>
-                    <div style={{
-                        background: 'var(--danger-soft)', border: '1px solid var(--danger-border)',
-                        borderRadius: 'var(--r-lg)', padding: '1.5rem'
-                    }}>
-                        <h3 style={{ color: 'var(--danger)', marginBottom: '0.5rem', fontFamily: "'Sora', sans-serif" }}>Something went wrong loading this tab</h3>
-                        <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: '1rem' }}>
+                    <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '1.5rem' }}>
+                        <h3 style={{ color: '#b91c1c', marginBottom: '0.5rem' }}>Something went wrong loading this tab</h3>
+                        <p style={{ color: '#7f1d1d', fontSize: 14, marginBottom: '1rem' }}>
                             {this.state.error?.message || 'Unknown error'}
                         </p>
                         <button className="btn btn-primary"
@@ -77,20 +70,6 @@ class TabErrorBoundary extends Component {
     }
 }
 
-// Sun icon
-const SunIcon = () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="5"/>
-        <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-    </svg>
-)
-// Moon icon
-const MoonIcon = () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-    </svg>
-)
-
 function App() {
     const [user, setUser] = useState(() => {
         try {
@@ -98,19 +77,8 @@ function App() {
             return saved ? JSON.parse(saved) : null
         } catch { return null }
     })
-    const [activeTab, setActiveTab]           = useState(0)
+    const [activeTab, setActiveTab]       = useState(0)
     const [sessionExpired, setSessionExpired] = useState(false)
-    const [theme, setTheme] = useState(() => {
-        const sys = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-        return sys
-    })
-
-    // Apply theme to <html>
-    useEffect(() => {
-        document.documentElement.setAttribute('data-theme', theme)
-    }, [theme])
-
-    const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
     const handleLogin = (u) => {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(u))
@@ -125,6 +93,7 @@ function App() {
         setActiveTab(0)
     }
 
+    // Listen for 401 / session-expired events dispatched by api.js
     useEffect(() => {
         const handleExpiry = () => {
             setSessionExpired(true)
@@ -144,78 +113,47 @@ function App() {
 
     return (
         <div className="app">
-            {/* Session expired banner */}
             {sessionExpired && (
                 <div style={{
                     position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
-                    background: 'var(--danger)', color: '#fff',
-                    padding: '14px 24px', display: 'flex', alignItems: 'center',
-                    justifyContent: 'space-between', fontSize: '14px',
-                    fontWeight: 600, boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+                    background: '#b91c1c', color: '#fff', padding: '14px 24px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    fontFamily: 'sans-serif', fontSize: '15px', boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
                 }}>
                     <span>⚠️ Your session has expired. Redirecting to login…</span>
                     <button onClick={() => { setSessionExpired(false); handleLogout() }}
-                        style={{
-                            background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.4)',
-                            color: '#fff', padding: '5px 14px', borderRadius: '6px', cursor: 'pointer',
-                            fontSize: '13px', fontWeight: 600,
-                        }}>
+                        style={{ background: 'none', border: '1px solid #fff', color: '#fff',
+                                 padding: '4px 12px', borderRadius: '4px', cursor: 'pointer' }}>
                         Dismiss
                     </button>
                 </div>
             )}
 
-            {/* Navbar */}
             <header className="navbar">
                 <div className="brand">
-                    {/* Inline SVG logo mark */}
-                    <div className="brand-mark" aria-label="KT Impex">
-                        KT
-                    </div>
-                    <div className="brand-copy">
+                    <span className="brand-mark">KT</span>
+                    <span className="brand-copy">
                         <span className="brand-name">KT Impex</span>
-                        <span className="brand-sub">Textile Wholesale</span>
-                    </div>
+                        <span className="brand-sub">Premium Textile Wholesale</span>
+                    </span>
                 </div>
-
                 <div className="userbar">
-                    {/* Theme toggle */}
-                    <button
-                        className="theme-toggle"
-                        onClick={toggleTheme}
-                        aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-                        title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-                    >
-                        {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-                    </button>
-
-                    <div className="user-pill">
-                        <span>{isAdmin ? 'Admin' : 'Dealer'}</span>
-                        <span style={{ color: 'var(--text)', fontWeight: 700 }}>{user.username}</span>
-                    </div>
-
-                    <button className="btn btn-logout" onClick={handleLogout}>
-                        Sign out
-                    </button>
+                    <span className="user-pill">{isAdmin ? 'Admin' : 'Dealer'}: {user.username}</span>
+                    <button className="btn btn-logout" onClick={handleLogout}>Logout</button>
                 </div>
             </header>
 
-            {/* Tab bar */}
-            <nav className="tabs" role="tablist">
+            <nav className="tabs">
                 {tabs.map((tab, i) => (
                     <button key={i}
-                        role="tab"
-                        aria-selected={activeTab === i}
                         className={`tab-btn ${activeTab === i ? 'active' : ''}`}
                         onClick={() => setActiveTab(i)}>
-                        <span style={{ fontSize: '13px' }}>{tab.icon}</span>
-                        {tab.label}
+                        {tab}
                     </button>
                 ))}
             </nav>
 
-            {/* Main content */}
-            <main className="content" role="main">
+            <main className="content">
                 <TabErrorBoundary tabKey={activeTab}>
                     {isAdmin ? (
                         <>
@@ -242,7 +180,7 @@ function App() {
             </main>
 
             <footer className="footer">
-                <p>KT Impex &middot; Birgunj, Nepal &middot; Dealer quotation &amp; factory sourcing portal</p>
+                <p>KT Impex, Birgunj, Nepal | Dealer quotation and factory sourcing portal</p>
             </footer>
         </div>
     )
