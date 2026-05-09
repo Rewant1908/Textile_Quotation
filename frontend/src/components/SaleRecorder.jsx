@@ -32,17 +32,26 @@ export default function SaleRecorder({ user }) {
     const loadAll = useCallback(async () => {
         setLoading(true); setFetchError('')
         try {
-            const [thanRes, retailerRes, salesRes] = await Promise.all([
+            // Fetch inventory and retailers — these are required for the form
+            const [thanRes, retailerRes] = await Promise.all([
                 API.get('/inventory/search', { params: { q: '' } }),
                 API.get('/retailers'),
-                API.get('/transactions', { headers: authHeader() })
             ])
             setThans(Array.isArray(thanRes.data) ? thanRes.data : [])
             setRetailers(Array.isArray(retailerRes.data) ? retailerRes.data : [])
-            setSales(Array.isArray(salesRes.data) ? salesRes.data : [])
         } catch (e) {
-            setFetchError(e?.response?.data?.error || e?.message || 'Failed to load data')
-        } finally { setLoading(false) }
+            setFetchError(e?.response?.data?.error || e?.message || 'Failed to load inventory/retailers')
+        } finally {
+            setLoading(false)
+        }
+
+        // Fetch recent sales separately — failure here should not block the form
+        try {
+            const salesRes = await API.get('/transactions', { headers: authHeader() })
+            setSales(Array.isArray(salesRes.data) ? salesRes.data : [])
+        } catch {
+            setSales([])  // non-fatal: form still works, just no history shown
+        }
     }, [authHeader])
 
     useEffect(() => { loadAll() }, [loadAll])
@@ -71,7 +80,6 @@ export default function SaleRecorder({ user }) {
     const handleSearchChange = e => {
         setSearch(e.target.value)
         setShowDropdown(true)
-        // If user edits after selecting, clear selection
         if (selectedThan) { setSelectedThan(null); setForm(f => ({ ...f, than_id: '', price: '' })) }
     }
 
@@ -138,7 +146,6 @@ export default function SaleRecorder({ user }) {
                         <div style={labelStyle}>
                             <span style={capStyle}>Search &amp; Select Than *</span>
 
-                            {/* Search input */}
                             <div style={{ position: 'relative' }}>
                                 <input
                                     value={search}
@@ -149,7 +156,6 @@ export default function SaleRecorder({ user }) {
                                     autoComplete="off"
                                     style={{ paddingRight: selectedThan ? '2.2rem' : undefined }}
                                 />
-                                {/* Clear button shown only when a than is selected */}
                                 {selectedThan && (
                                     <button
                                         type="button"
@@ -160,7 +166,6 @@ export default function SaleRecorder({ user }) {
                                 )}
                             </div>
 
-                            {/* Floating dropdown — only when showDropdown and no selection */}
                             {showDropdown && !selectedThan && (
                                 <div style={{ position: 'relative' }}>
                                     <div style={{
