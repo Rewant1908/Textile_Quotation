@@ -161,10 +161,15 @@ export default function LoginPage({ onLogin }) {
         setIsSignup(false)
         setSuccess('Account created! Please login.')
       } else {
-        // Save JWT so api.js interceptor attaches it to every request
         if (data.token) {
           localStorage.setItem('kt_impex_token', data.token)
         }
+        // Persist user object so App.jsx can restore it on page refresh
+        localStorage.setItem('kt_impex_user', JSON.stringify({
+          user_id:  data.user_id,
+          username: data.username,
+          role:     data.role,
+        }))
         onLogin({ user_id: data.user_id, username: data.username, role: data.role })
       }
     } catch (err) {

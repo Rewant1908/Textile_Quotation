@@ -64,11 +64,31 @@ function AppInner() {
     const navigate = useNavigate()
     const [sessionExpired, setSessionExpired] = useState(false)
 
+    // Read persisted user on mount (survives page refresh)
+    const [user, setUser] = useState(() => {
+        try {
+            return JSON.parse(localStorage.getItem('kt_impex_user')) || null
+        } catch {
+            return null
+        }
+    })
+
+    const handleLogin = (userData) => {
+        setUser(userData)
+    }
+
+    const clearSession = () => {
+        localStorage.removeItem('kt_impex_token')
+        localStorage.removeItem('kt_impex_user')
+        setUser(null)
+    }
+
     useEffect(() => {
         const handleExpiry = () => {
             setSessionExpired(true)
             setTimeout(() => {
                 setSessionExpired(false)
+                clearSession()
                 navigate('/login', { replace: true })
             }, 3000)
         }
@@ -81,55 +101,56 @@ function AppInner() {
             {sessionExpired && (
                 <SessionExpiredBanner onDismiss={() => {
                     setSessionExpired(false)
+                    clearSession()
                     navigate('/login', { replace: true })
                 }} />
             )}
             <Routes>
                 {/* Public */}
-                <Route path="/login" element={<LoginPage />} />
+                <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
 
                 {/* Protected */}
                 <Route path="/" element={
-                    <RequireAuth><Dashboard /></RequireAuth>
+                    <RequireAuth><Dashboard user={user} /></RequireAuth>
                 } />
                 <Route path="/products" element={
-                    <RequireAuth><Products /></RequireAuth>
+                    <RequireAuth><Products user={user} /></RequireAuth>
                 } />
                 <Route path="/admin/products" element={
-                    <RequireAuth><AdminProductManager /></RequireAuth>
+                    <RequireAuth><AdminProductManager user={user} /></RequireAuth>
                 } />
                 <Route path="/suppliers" element={
-                    <RequireAuth><Suppliers /></RequireAuth>
+                    <RequireAuth><Suppliers user={user} /></RequireAuth>
                 } />
                 <Route path="/retailers" element={
-                    <RequireAuth><Retailers /></RequireAuth>
+                    <RequireAuth><Retailers user={user} /></RequireAuth>
                 } />
                 <Route path="/retailers/new" element={
-                    <RequireAuth><CustomerForm /></RequireAuth>
+                    <RequireAuth><CustomerForm user={user} /></RequireAuth>
                 } />
                 <Route path="/sales" element={
-                    <RequireAuth><Sales /></RequireAuth>
+                    <RequireAuth><Sales user={user} /></RequireAuth>
                 } />
                 <Route path="/quotations" element={
-                    <RequireAuth><Quotations /></RequireAuth>
+                    <RequireAuth><Quotations user={user} /></RequireAuth>
                 } />
                 <Route path="/quotations/new" element={
-                    <RequireAuth><QuotationForm /></RequireAuth>
+                    <RequireAuth><QuotationForm user={user} /></RequireAuth>
                 } />
                 <Route path="/analytics" element={
-                    <RequireAuth><Analytics /></RequireAuth>
+                    <RequireAuth><Analytics user={user} /></RequireAuth>
                 } />
                 <Route path="/analytics/deadstock" element={
-                    <RequireAuth><DeadStockAnalytics /></RequireAuth>
+                    <RequireAuth><DeadStockAnalytics user={user} /></RequireAuth>
                 } />
                 <Route path="/warehouse" element={
-                    <RequireAuth><WarehouseIntelligence /></RequireAuth>
+                    <RequireAuth><WarehouseIntelligence user={user} /></RequireAuth>
                 } />
                 <Route path="/bales" element={
-                    <RequireAuth><BaleManager /></RequireAuth>
+                    <RequireAuth><BaleManager user={user} /></RequireAuth>
                 } />
                 <Route path="/agent-chat" element={
-                    <RequireAuth><AgentChat /></RequireAuth>
+                    <RequireAuth><AgentChat user={user} /></RequireAuth>
                 } />
 
                 {/* Fallback */}
