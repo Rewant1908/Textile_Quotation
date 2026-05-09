@@ -2,16 +2,9 @@
  * server.js — KT IMPEX API entry point
  *
  * Phase 7: /api/admin/settings route registered
- * Fix: removed app.use('/api', operationsRouter) catch-all that was intercepting
- *      /api/analytics and /api/bales before their dedicated routers could handle them.
- *      All operationsRouter paths are now mounted explicitly.
+ * Fix: dotenv is loaded via --import ./load-env.js (see package.json start script)
+ *      so all process.env vars are available before any ES module import runs.
  */
-import { config } from 'dotenv';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-const __dirname = dirname(fileURLToPath(import.meta.url));
-config({ path: join(__dirname, '.env') });
-
 import express       from 'express';
 import cors          from 'cors';
 import helmet        from 'helmet';
@@ -56,10 +49,6 @@ app.use(cors({
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, standardHeaders: true, legacyHeaders: false }));
 
 // ── Mount routes ──────────────────────────────────────────────────────────────
-// IMPORTANT: Do NOT use app.use('/api', operationsRouter) — that catch-all
-// intercepts /api/analytics, /api/bales, /api/quotations etc. before they
-// reach their own routers. Mount every path explicitly instead.
-
 app.use('/api/auth',                   authRouter);
 app.use('/api/analytics',              analyticsRouter);
 app.use('/api/bales',                  balesRouter);
@@ -70,10 +59,10 @@ app.use('/api/suppliers',              suppliersRouter);
 app.use('/api/products',               productsRouter);
 app.use('/api/agents',                 agentRouter);
 app.use('/api/admin/settings',         settingsRouter);
-app.use('/api/admin',                  operationsRouter);  // /api/admin/recalculate-speeds
-app.use('/api/operations',             operationsRouter);  // /api/operations/dashboard
-app.use('/api/thans',                  operationsRouter);  // /api/thans
-app.use('/api/inventory',              operationsRouter);  // /api/inventory/search
+app.use('/api/admin',                  operationsRouter);
+app.use('/api/operations',             operationsRouter);
+app.use('/api/thans',                  operationsRouter);
+app.use('/api/inventory',              operationsRouter);
 
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
