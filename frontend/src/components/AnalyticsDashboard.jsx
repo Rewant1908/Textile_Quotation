@@ -1,685 +1,475 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import API from '../api'
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-function getToken() { return localStorage.getItem('kt_impex_token') || ''; }
-function authHeaders() { return { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` }; }
+const money  = (v) => `NPR ${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`
+const meters = (v) => `${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })} m`
+const pct    = (v, d = 1) => `${Number(v || 0).toFixed(d)}%`
 
-// ─── Formatters ──────────────────────────────────────────────────────────────
-function fmt(n, d = 0) {
-    const v = parseFloat(n);
-    if (isNaN(v)) return '—';
-    return new Intl.NumberFormat('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
+// ── Pill helpers ──────────────────────────────────────────────────────────────────
+function paymentPillClass(pattern) {
+    if (pattern === 'net_60') return 'mini-pill warning'
+    if (pattern === 'credit') return 'mini-pill danger'
+    if (pattern === 'net_30') return 'mini-pill warning'
+    return 'mini-pill'
 }
-function fmtRs(n) { const v = parseFloat(n); if (isNaN(v)) return '—'; return '₹' + fmt(v, 0); }
-function fmtK(n) {
-    const v = parseFloat(n);
-    if (isNaN(v)) return '—';
-    if (Math.abs(v) >= 10000000) return '₹' + fmt(v / 10000000, 2) + ' Cr';
-    if (Math.abs(v) >= 100000)  return '₹' + fmt(v / 100000, 2) + ' L';
-    if (Math.abs(v) >= 1000)    return '₹' + fmt(v / 1000, 1) + 'K';
-    return '₹' + fmt(v, 0);
-}
-function marginColor(pct) {
-    const p = parseFloat(pct);
-    if (isNaN(p)) return 'var(--an-muted)';
-    if (p >= 20) return '#437a22'; if (p >= 10) return '#006494';
-    if (p >= 0)  return '#b07a00'; return '#a12c7b';
-}
-function marginBg(pct) {
-    const p = parseFloat(pct);
-    if (isNaN(p)) return 'transparent';
-    if (p >= 20) return '#437a2218'; if (p >= 10) return '#00649418';
-    if (p >= 0)  return '#b07a0018'; return '#a12c7b18';
+function marginPillClass(p) {
+    const n = Number(p || 0)
+    if (n >= 20) return 'mini-pill'
+    if (n >= 10) return 'mini-pill warning'
+    return 'mini-pill danger'
 }
 
-// ─── Design tokens (scoped) ──────────────────────────────────────────────────
-const STYLES = `
-  .an-root {
-    --an-bg:        #f7f6f2;
-    --an-surface:   #ffffff;
-    --an-surface2:  #f9f8f5;
-    --an-border:    rgba(0,0,0,0.08);
-    --an-divider:   rgba(0,0,0,0.06);
-    --an-text:      #1a1916;
-    --an-muted:     #6b6a67;
-    --an-faint:     #b0afa9;
-    --an-primary:   #01696f;
-    --an-primary2:  #0c4e54;
-    --an-green:     #437a22;
-    --an-amber:     #b07a00;
-    --an-orange:    #c55700;
-    --an-red:       #a12c7b;
-    --an-blue:      #006494;
-    --an-shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 1px 8px rgba(0,0,0,0.04);
-    --an-shadow-md: 0 2px 4px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.06);
-    --an-r:    8px;
-    --an-r-lg: 12px;
-    font-family: -apple-system, 'Inter', 'Segoe UI', sans-serif;
-    font-size: 13px;
-    color: var(--an-text);
-    background: var(--an-bg);
-  }
-  .an-root * { box-sizing: border-box; }
-  .an-root table { border-collapse: collapse; width: 100%; }
-  .an-root button { cursor: pointer; font: inherit; }
-
-  /* Nav pill */
-  .an-nav { display:flex; gap:2px; background:var(--an-surface2); border:1px solid var(--an-border); border-radius:10px; padding:3px; width:fit-content; flex-wrap:wrap; }
-  .an-nav-btn { padding:6px 14px; border-radius:7px; border:none; background:transparent; color:var(--an-muted); font-size:12.5px; font-weight:500; transition:all 140ms ease; white-space:nowrap; }
-  .an-nav-btn:hover { color:var(--an-text); background:rgba(0,0,0,0.04); }
-  .an-nav-btn.active { background:var(--an-surface); color:var(--an-primary); font-weight:600;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.06); }
-
-  /* Card */
-  .an-card { background:var(--an-surface); border:1px solid var(--an-border); border-radius:var(--an-r-lg); overflow:hidden; box-shadow:var(--an-shadow-sm); }
-  .an-card-header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px 12px; border-bottom:1px solid var(--an-divider); }
-  .an-card-title { margin:0; font-size:14px; font-weight:650; color:var(--an-text); letter-spacing:-0.01em; }
-  .an-card-sub { margin:2px 0 0; font-size:11.5px; color:var(--an-muted); }
-
-  /* Table */
-  .an-thead tr { background:var(--an-surface2); }
-  .an-thead th { padding:8px 16px; font-size:10.5px; font-weight:650; letter-spacing:0.05em; color:var(--an-faint); text-transform:uppercase; text-align:right; white-space:nowrap; border-bottom:1px solid var(--an-divider); }
-  .an-thead th:first-child { text-align:left; }
-  .an-tbody tr { transition:background 100ms ease; }
-  .an-tbody tr:hover { background:var(--an-surface2); }
-  .an-td { padding:10px 16px; border-bottom:1px solid var(--an-divider); color:var(--an-text); white-space:nowrap; font-variant-numeric:tabular-nums; text-align:right; }
-  .an-td:first-child { text-align:left; }
-  .an-td.muted { color:var(--an-muted); }
-  .an-tbody tr:last-child .an-td { border-bottom:none; }
-
-  /* Rank chip */
-  .an-rank { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:6px; font-size:11px; font-weight:700; background:var(--an-surface2); border:1px solid var(--an-border); color:var(--an-muted); }
-  .an-rank.gold   { background:#fef3c7; border-color:#fbbf24; color:#92400e; }
-  .an-rank.silver { background:#f1f5f9; border-color:#94a3b8; color:#475569; }
-  .an-rank.bronze { background:#fef9f0; border-color:#d97706; color:#92400e; }
-
-  /* Badge */
-  .an-badge { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:600; letter-spacing:0.01em; }
-
-  /* Margin pill in cell */
-  .an-mpill { display:inline-block; padding:2px 7px; border-radius:5px; font-size:12px; font-weight:700; min-width:46px; text-align:right; }
-
-  /* Revenue bar in cell */
-  .an-revbar { display:flex; align-items:center; gap:8px; }
-  .an-revbar-track { flex:1; height:4px; border-radius:99px; background:rgba(0,0,0,0.07); min-width:48px; max-width:80px; }
-  .an-revbar-fill  { height:100%; border-radius:99px; background:var(--an-primary); }
-
-  /* KPI strip */
-  .an-kpi-strip { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); border-bottom:1px solid var(--an-divider); }
-  .an-kpi-cell { padding:14px 20px; border-right:1px solid var(--an-divider); }
-  .an-kpi-cell:last-child { border-right:none; }
-  .an-kpi-label { font-size:10.5px; font-weight:650; color:var(--an-faint); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px; }
-  .an-kpi-val { font-size:20px; font-weight:750; letter-spacing:-0.02em; font-variant-numeric:tabular-nums; line-height:1; }
-
-  /* Refresh btn */
-  .an-refresh { display:inline-flex; align-items:center; gap:5px; padding:5px 10px; border-radius:6px; border:1px solid var(--an-border); background:var(--an-surface2); color:var(--an-muted); font-size:12px; font-weight:500; transition:all 120ms ease; }
-  .an-refresh:hover { background:var(--an-surface); color:var(--an-text); box-shadow:var(--an-shadow-sm); }
-
-  /* Skeleton */
-  @keyframes an-shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
-  .an-skel { background:linear-gradient(90deg,var(--an-surface2) 25%,rgba(0,0,0,0.05) 50%,var(--an-surface2) 75%); background-size:200% 100%; animation:an-shimmer 1.5s ease-in-out infinite; border-radius:4px; }
-
-  /* Error / empty */
-  .an-err   { padding:16px 20px; font-size:12.5px; color:var(--an-red); display:flex; align-items:center; gap:8px; }
-  .an-empty { padding:40px 20px; text-align:center; color:var(--an-faint); font-size:13px; }
-  .an-empty-icon { font-size:28px; margin-bottom:8px; }
-
-  /* P&L chart */
-  .an-chart-wrap { padding:20px; overflow-x:auto; }
-  .an-chart-bars { display:flex; align-items:flex-end; gap:5px; height:180px; min-width:fit-content; }
-  .an-bar-group { display:flex; align-items:flex-end; gap:2px; flex:1; min-width:32px; position:relative; }
-  .an-bar { border-radius:3px 3px 0 0; transition:opacity 140ms ease; cursor:default; }
-  .an-bar-group:hover .an-bar { opacity:0.8; }
-  .an-bar-group.hov .an-bar { opacity:1; }
-  .an-tooltip { position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%);
-    background:var(--an-text); color:#fff; border-radius:7px; padding:8px 11px; font-size:11px;
-    white-space:nowrap; z-index:20; box-shadow:0 4px 16px rgba(0,0,0,0.2); pointer-events:none; line-height:1.7; }
-  .an-tooltip::after { content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%);
-    border:5px solid transparent; border-top-color:var(--an-text); }
-  .an-chart-labels { display:flex; gap:5px; margin-top:6px; min-width:fit-content; }
-  .an-bar-label { flex:1; min-width:32px; text-align:center; font-size:9.5px; color:var(--an-faint); }
-  .an-yaxis { position:absolute; top:0; left:0; right:0; pointer-events:none; }
-
-  /* Heatmap cards */
-  .an-heat-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; padding:20px; }
-  .an-heat-card { border-radius:var(--an-r); padding:14px 16px; border:1px solid transparent; cursor:default;
-    transition:transform 140ms ease, box-shadow 140ms ease; }
-  .an-heat-card:hover { transform:translateY(-2px); box-shadow:var(--an-shadow-md); }
-  .an-heat-loc { font-size:12px; font-weight:650; color:var(--an-text); margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .an-heat-val { font-size:22px; font-weight:800; letter-spacing:-0.02em; font-variant-numeric:tabular-nums; line-height:1.1; }
-  .an-heat-meta { font-size:11px; color:var(--an-muted); margin-top:4px; }
-  .an-heat-days { font-size:11px; margin-top:2px; font-weight:600; }
-  .an-heat-bar-track { height:3px; border-radius:99px; background:rgba(0,0,0,0.1); margin-top:10px; }
-  .an-heat-bar-fill  { height:100%; border-radius:99px; transition:width 500ms cubic-bezier(0.16,1,0.3,1); }
-
-  /* Aging stacked bar */
-  .an-aging-bar { display:flex; height:6px; border-radius:99px; overflow:hidden; width:80px; }
-  .an-aging-seg { transition:flex 400ms ease; }
-
-  /* Mobile */
-  @media(max-width:640px) {
-    .an-nav { width:100%; }
-    .an-nav-btn { flex:1 1 calc(50% - 4px); text-align:center; }
-    .an-kpi-strip { grid-template-columns:1fr 1fr; }
-    .an-kpi-cell:nth-child(even) { border-right:none; }
-    .an-heat-grid { grid-template-columns:1fr 1fr; }
-    .an-revbar-track { display:none; }
-    .an-chart-wrap { padding:12px; }
-  }
-`;
-
-// ─── Primitives ──────────────────────────────────────────────────────────────
-function Badge({ label, color }) {
+// ── Shared sub-components ────────────────────────────────────────────────────────
+function KPI({ label, value, accent }) {
     return (
-        <span className="an-badge" style={{ background: color + '18', color, border: `1px solid ${color}30` }}>
-            {label}
-        </span>
-    );
-}
-function PaymentBadge({ p }) {
-    const MAP = { immediate: '#437a22', net_15: '#006494', net_30: '#b07a00', net_60: '#c55700', credit: '#a12c7b' };
-    return <Badge label={(p || '—').replace('_', ' ')} color={MAP[p] || '#6b6a67'} />;
-}
-function MarginPill({ pct }) {
-    const c = marginColor(pct); const bg = marginBg(pct);
-    return <span className="an-mpill" style={{ color: c, background: bg }}>{fmt(pct, 1)}%</span>;
-}
-function RankChip({ n }) {
-    const cls = n === 1 ? 'gold' : n === 2 ? 'silver' : n === 3 ? 'bronze' : '';
-    return <span className={`an-rank ${cls}`}>{n}</span>;
-}
-function RefreshBtn({ onClick, loading }) {
-    return (
-        <button className="an-refresh" onClick={onClick} disabled={loading}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" style={{ transform: loading ? 'rotate(360deg)' : 'none', transition: loading ? 'transform 0.6s linear' : 'none' }}>
-                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
-            </svg>
-            Refresh
-        </button>
-    );
-}
-function ErrMsg({ msg, onRetry }) {
-    return (
-        <div className="an-err">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            {msg}
-            <button onClick={onRetry} style={{ marginLeft:4, color:'inherit', textDecoration:'underline', background:'none', border:'none', padding:0 }}>Retry</button>
+        <div className="metric-card">
+            <span>{label}</span>
+            <strong style={{
+                color: accent === 'danger'  ? 'var(--red)'
+                     : accent === 'warning' ? 'var(--gold)'
+                     : undefined
+            }}>{value}</strong>
         </div>
-    );
+    )
 }
-function Empty({ icon = '📭', msg }) {
-    return <div className="an-empty"><div className="an-empty-icon">{icon}</div><div>{msg}</div></div>;
-}
-function SkeletonRows({ cols, rows = 5 }) {
-    return Array.from({ length: rows }).map((_, i) => (
-        <tr key={i}>
-            {Array.from({ length: cols }).map((__, j) => (
-                <td key={j} className="an-td">
-                    <div className="an-skel" style={{ height: 13, width: j === 0 ? '75%' : '55%', borderRadius: 4 }} />
-                </td>
-            ))}
-        </tr>
-    ));
-}
-function Card({ title, subtitle, action, children }) {
+function EmptyState({ msg }) { return <p className="empty-state">{msg}</p> }
+
+// ── Tab config ────────────────────────────────────────────────────────────────────
+const VIEWS = [
+    { id: 'top-retailers',   label: 'Top Retailers' },
+    { id: 'margin-supplier', label: 'Margin / Supplier' },
+    { id: 'margin-retailer', label: 'Margin / Retailer' },
+    { id: 'payment-aging',   label: 'Payment Aging' },
+    { id: 'monthly-pnl',     label: 'Monthly P&L' },
+    { id: 'dead-stock-map',  label: 'Dead Stock Map' },
+]
+
+// ── Monthly P&L bar chart ───────────────────────────────────────────────────────
+function PnLBarChart({ rows }) {
+    const [hover, setHover] = useState(null)
+    const maxVal = useMemo(() => Math.max(...rows.map(r => Number(r.revenue || 0)), 1), [rows])
+    const BAR_H  = 140
     return (
-        <div className="an-card" style={{ marginBottom: 20 }}>
-            <div className="an-card-header">
-                <div>
-                    <h3 className="an-card-title">{title}</h3>
-                    {subtitle && <p className="an-card-sub">{subtitle}</p>}
-                </div>
-                {action}
+        <div>
+            <div style={{ display: 'flex', gap: 16, marginBottom: 12, fontSize: 12, color: 'var(--color-text-muted,#888)' }}>
+                <span><span style={{ display:'inline-block', width:10, height:10, borderRadius:2, background:'var(--teal,#01696f)', marginRight:4 }} />Revenue</span>
+                <span><span style={{ display:'inline-block', width:10, height:10, borderRadius:2, background:'var(--green,#437a22)', marginRight:4 }} />Gross Profit</span>
             </div>
-            {children}
-        </div>
-    );
-}
-function DataTable({ headers, children }) {
-    return (
-        <div style={{ overflowX: 'auto' }}>
-            <table>
-                <thead className="an-thead">
-                    <tr>{headers.map((h, i) => <th key={i}>{h}</th>)}</tr>
-                </thead>
-                <tbody className="an-tbody">{children}</tbody>
-            </table>
-        </div>
-    );
-}
-function Td({ children, muted, colSpan }) {
-    return <td className={`an-td${muted ? ' muted' : ''}`} colSpan={colSpan}>{children}</td>;
-}
-
-// ─── Hook: fetch ─────────────────────────────────────────────────────────────
-function useFetch(endpoint) {
-    const [data, setData] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const load = useCallback(async () => {
-        setLoading(true); setError(null);
-        try {
-            const r = await fetch(`${API}${endpoint}`, { headers: authHeaders() });
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            const json = await r.json();
-            setData(Array.isArray(json) ? json : json);
-        } catch (e) { setError(e.message); } finally { setLoading(false); }
-    }, [endpoint]);
-    useEffect(() => { load(); }, [load]);
-    return { data, loading, error, reload: load };
-}
-
-// ─── Revenue spark bar ────────────────────────────────────────────────────────
-function RevBar({ val, max }) {
-    const pct = max > 0 ? Math.round((val / max) * 100) : 0;
-    return (
-        <div className="an-revbar">
-            <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtK(val)}</span>
-            <div className="an-revbar-track"><div className="an-revbar-fill" style={{ width: pct + '%' }} /></div>
-        </div>
-    );
-}
-
-// ─── TOP RETAILERS ───────────────────────────────────────────────────────────
-function TopRetailersTable() {
-    const { data: rows, loading, error, reload } = useFetch('/api/analytics/top-retailers');
-    const maxRev = Math.max(...rows.map(r => parseFloat(r.revenue) || 0), 1);
-    const H = ['Rank', 'Retailer', 'Location', 'Terms', 'Orders', 'Meters', 'Revenue', 'Margin %', 'Outstanding'];
-    return (
-        <Card
-            title="Top Retailers by Revenue"
-            subtitle="All-time · top 10 ranked by total revenue"
-            action={<RefreshBtn onClick={reload} loading={loading} />}
-        >
-            {error && <ErrMsg msg={error} onRetry={reload} />}
-            <DataTable headers={H}>
-                {loading ? <SkeletonRows cols={H.length} />
-                : rows.length === 0 ? <tr><td colSpan={H.length}><Empty icon="🏪" msg="No sales data yet. Record a transaction to see rankings." /></td></tr>
-                : rows.map((r, i) => (
-                    <tr key={r.retailer_id}>
-                        <Td><RankChip n={i + 1} /></Td>
-                        <Td>
-                            <div style={{ fontWeight: 600, fontSize: 13 }}>{r.shop_name}</div>
-                        </Td>
-                        <Td muted>{r.market_location || '—'}</Td>
-                        <Td><PaymentBadge p={r.payment_pattern} /></Td>
-                        <Td muted>{fmt(r.order_count)}</Td>
-                        <Td muted>{fmt(r.meters_bought)} m</Td>
-                        <Td><RevBar val={parseFloat(r.revenue) || 0} max={maxRev} /></Td>
-                        <Td><MarginPill pct={r.margin_pct} /></Td>
-                        <Td>
-                            <span style={{ fontWeight: 600, color: parseFloat(r.outstanding_balance) > 0 ? 'var(--an-orange)' : 'var(--an-green)' }}>
-                                {fmtRs(r.outstanding_balance)}
-                            </span>
-                        </Td>
-                    </tr>
-                ))}
-            </DataTable>
-        </Card>
-    );
-}
-
-// ─── MARGIN / SUPPLIER ────────────────────────────────────────────────────────
-function MarginPerSupplierTable() {
-    const { data: rows, loading, error, reload } = useFetch('/api/analytics/margin-per-supplier');
-    const H = ['Supplier', 'Quality', 'Bales', 'Thans', 'Meters', 'Margin ₹', '₹ / m', 'Cap Eff.', 'Delays'];
-    function stars(r) { const n = Math.round(parseFloat(r) || 0); return '★'.repeat(n) + '☆'.repeat(5 - n); }
-    const delayMap = { never: '#437a22', rarely: '#006494', sometimes: '#b07a00', often: '#c55700', always: '#a12c7b' };
-    return (
-        <Card title="Margin per Supplier" subtitle="Realized margin · ₹/meter efficiency · capital utilisation"
-            action={<RefreshBtn onClick={reload} loading={loading} />}>
-            {error && <ErrMsg msg={error} onRetry={reload} />}
-            <DataTable headers={H}>
-                {loading ? <SkeletonRows cols={H.length} />
-                : rows.length === 0 ? <tr><td colSpan={H.length}><Empty icon="🏭" msg="No supplier data yet." /></td></tr>
-                : rows.map((s, i) => (
-                    <tr key={s.supplier_id}>
-                        <Td><span style={{ fontWeight: 600 }}>{s.supplier_name}</span></Td>
-                        <Td><span style={{ color: '#b07a00', letterSpacing: 1, fontSize: 12 }} title={`${s.quality_rating}/5`}>{stars(s.quality_rating)}</span></Td>
-                        <Td muted>{fmt(s.bales_received)}</Td>
-                        <Td muted>{fmt(s.thans_created)}</Td>
-                        <Td muted>{fmt(s.meters_sold)} m</Td>
-                        <Td><span style={{ fontWeight: 700 }}>{fmtK(s.realized_margin)}</span></Td>
-                        <Td><MarginPill pct={parseFloat(s.margin_per_meter) * 5} /></Td>
-                        <Td><MarginPill pct={s.capital_efficiency_pct} /></Td>
-                        <Td><Badge label={s.delay_frequency || '—'} color={delayMap[s.delay_frequency] || '#6b6a67'} /></Td>
-                    </tr>
-                ))}
-            </DataTable>
-        </Card>
-    );
-}
-
-// ─── MARGIN / RETAILER ────────────────────────────────────────────────────────
-function MarginPerRetailerTable() {
-    const { data: rows, loading, error, reload } = useFetch('/api/analytics/margin-per-retailer');
-    const maxMargin = Math.max(...rows.map(r => parseFloat(r.total_margin) || 0), 1);
-    const H = ['Retailer', 'Location', 'Terms', 'Orders', 'Revenue', 'Margin ₹', 'Margin %', 'Avg / Order', 'Outstanding'];
-    return (
-        <Card title="Margin per Retailer" subtitle="Credit risk & profitability · top 15 by margin"
-            action={<RefreshBtn onClick={reload} loading={loading} />}>
-            {error && <ErrMsg msg={error} onRetry={reload} />}
-            <DataTable headers={H}>
-                {loading ? <SkeletonRows cols={H.length} />
-                : rows.length === 0 ? <tr><td colSpan={H.length}><Empty icon="📊" msg="No transaction data yet." /></td></tr>
-                : rows.map((r, i) => (
-                    <tr key={r.retailer_id}>
-                        <Td><span style={{ fontWeight: 600 }}>{r.shop_name}</span></Td>
-                        <Td muted>{r.market_location || '—'}</Td>
-                        <Td><PaymentBadge p={r.payment_pattern} /></Td>
-                        <Td muted>{fmt(r.order_count)}</Td>
-                        <Td muted>{fmtRs(r.revenue)}</Td>
-                        <Td><RevBar val={parseFloat(r.total_margin) || 0} max={maxMargin} /></Td>
-                        <Td><MarginPill pct={r.margin_pct} /></Td>
-                        <Td muted>{fmtRs(r.avg_margin_per_order)}</Td>
-                        <Td>
-                            <span style={{ fontWeight: 600, color: parseFloat(r.outstanding_balance) > 0 ? 'var(--an-orange)' : 'var(--an-green)' }}>
-                                {fmtRs(r.outstanding_balance)}
-                            </span>
-                        </Td>
-                    </tr>
-                ))}
-            </DataTable>
-        </Card>
-    );
-}
-
-// ─── PAYMENT AGING ────────────────────────────────────────────────────────────
-function PaymentAgingTable() {
-    const { data: rows, loading, error, reload } = useFetch('/api/analytics/payment-aging');
-    const H = ['Retailer', 'Location', 'Terms', '0–30 days', '31–60 days', '60+ days', 'Aging Split', 'Outstanding', 'Unpaid', 'Last Sale'];
-
-    const t0   = rows.reduce((s, r) => s + parseFloat(r.bucket_0_30   || 0), 0);
-    const t31  = rows.reduce((s, r) => s + parseFloat(r.bucket_31_60  || 0), 0);
-    const t60  = rows.reduce((s, r) => s + parseFloat(r.bucket_60_plus || 0), 0);
-    const tOB  = rows.reduce((s, r) => s + parseFloat(r.outstanding_balance || 0), 0);
-    const tTxn = rows.reduce((s, r) => s + parseInt(r.unpaid_count || 0), 0);
-
-    return (
-        <Card title="Retailer Payment Aging"
-            subtitle="Unpaid & partial transactions bucketed by days outstanding"
-            action={<RefreshBtn onClick={reload} loading={loading} />}>
-            {error && <ErrMsg msg={error} onRetry={reload} />}
-
-            {/* KPI strip */}
-            {!loading && rows.length > 0 && (
-                <div className="an-kpi-strip">
-                    {[['0–30 days', t0, 'var(--an-green)'],
-                      ['31–60 days', t31, 'var(--an-orange)'],
-                      ['60+ days', t60, 'var(--an-red)'],
-                      ['Total Outstanding', tOB, 'var(--an-text)'],
-                      ['Unpaid Transactions', tTxn, 'var(--an-blue)', true]
-                    ].map(([label, val, color, isCount]) => (
-                        <div className="an-kpi-cell" key={label}>
-                            <div className="an-kpi-label">{label}</div>
-                            <div className="an-kpi-val" style={{ color }}>{isCount ? val : fmtK(val)}</div>
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            <DataTable headers={H}>
-                {loading ? <SkeletonRows cols={H.length} />
-                : rows.length === 0 ? <tr><td colSpan={H.length}><Empty icon="✅" msg="All retailers are fully paid up." /></td></tr>
-                : rows.map((r, i) => {
-                    const b0  = parseFloat(r.bucket_0_30   || 0);
-                    const b31 = parseFloat(r.bucket_31_60  || 0);
-                    const b60 = parseFloat(r.bucket_60_plus || 0);
-                    const tot = b0 + b31 + b60 || 1;
-                    const isOverdue = b60 > 0;
+            <div style={{ display:'flex', alignItems:'flex-end', gap:6, height: BAR_H + 32, overflowX:'auto', paddingBottom:4 }}>
+                {rows.map((r, i) => {
+                    const rev    = Number(r.revenue      || 0)
+                    const profit = Number(r.gross_profit || 0)
+                    const revH   = Math.round((rev    / maxVal) * BAR_H)
+                    const profH  = Math.round((profit / maxVal) * BAR_H)
+                    const isH    = hover === i
+                    const label  = r.month ? new Date(r.month + '-01').toLocaleDateString('en-IN', { month:'short', year:'2-digit' }) : r.month
                     return (
-                        <tr key={r.retailer_id}>
-                            <Td>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <span style={{ fontWeight: 600 }}>{r.shop_name}</span>
-                                    {isOverdue && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--an-red)', background: 'var(--an-red)18', border: '1px solid var(--an-red)30', borderRadius: 4, padding: '1px 5px' }}>OVERDUE</span>}
+                        <div key={i} style={{ flex:'0 0 auto', minWidth:40, display:'flex', flexDirection:'column', alignItems:'center', position:'relative' }}
+                            onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+                            {isH && (
+                                <div style={{ position:'absolute', bottom: BAR_H+10, left:'50%', transform:'translateX(-50%)', background:'var(--color-text,#28251d)', color:'#fff', borderRadius:6, padding:'6px 10px', fontSize:11, whiteSpace:'nowrap', zIndex:10, boxShadow:'0 2px 8px rgba(0,0,0,0.18)', lineHeight:1.7 }}>
+                                    <div style={{ fontWeight:700 }}>{label}</div>
+                                    <div>Rev: {money(rev)}</div>
+                                    <div>Profit: {money(profit)}</div>
+                                    <div>Margin: {pct(r.margin_pct)}</div>
                                 </div>
-                            </Td>
-                            <Td muted>{r.market_location || '—'}</Td>
-                            <Td><PaymentBadge p={r.payment_pattern} /></Td>
-                            <Td><span style={{ color: b0 > 0 ? 'var(--an-green)' : 'var(--an-faint)', fontWeight: b0 > 0 ? 600 : 400 }}>{b0 > 0 ? fmtRs(b0) : '—'}</span></Td>
-                            <Td><span style={{ color: b31 > 0 ? 'var(--an-orange)' : 'var(--an-faint)', fontWeight: b31 > 0 ? 600 : 400 }}>{b31 > 0 ? fmtRs(b31) : '—'}</span></Td>
-                            <Td><span style={{ color: b60 > 0 ? 'var(--an-red)' : 'var(--an-faint)', fontWeight: b60 > 0 ? 700 : 400 }}>{b60 > 0 ? fmtRs(b60) : '—'}</span></Td>
-                            <Td>
-                                <div className="an-aging-bar">
-                                    {b0  > 0 && <div className="an-aging-seg" style={{ flex: b0/tot,  background: 'var(--an-green)' }} />}
-                                    {b31 > 0 && <div className="an-aging-seg" style={{ flex: b31/tot, background: 'var(--an-orange)' }} />}
-                                    {b60 > 0 && <div className="an-aging-seg" style={{ flex: b60/tot, background: 'var(--an-red)' }} />}
-                                </div>
-                            </Td>
-                            <Td><span style={{ fontWeight: 700, color: 'var(--an-orange)' }}>{fmtRs(r.outstanding_balance)}</span></Td>
-                            <Td>
-                                <span style={{ background: 'var(--an-red)18', color: 'var(--an-red)', borderRadius: 99, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>{r.unpaid_count}</span>
-                            </Td>
-                            <Td muted>{r.last_transaction ? new Date(r.last_transaction).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</Td>
-                        </tr>
-                    );
+                            )}
+                            <div style={{ display:'flex', alignItems:'flex-end', gap:2, height: BAR_H }}>
+                                <div style={{ width:14, height: revH,  background: isH ? '#0c4e54' : 'var(--teal,#01696f)',  borderRadius:'3px 3px 0 0', transition:'all 150ms ease' }} />
+                                <div style={{ width:14, height: profH, background: isH ? '#2e5c10' : 'var(--green,#437a22)', borderRadius:'3px 3px 0 0', transition:'all 150ms ease' }} />
+                            </div>
+                            <div style={{ fontSize:9, color:'var(--color-text-muted,#888)', marginTop:4, transform:'rotate(-35deg)', transformOrigin:'center top', height:22, whiteSpace:'nowrap' }}>{label}</div>
+                        </div>
+                    )
                 })}
-            </DataTable>
-        </Card>
-    );
+            </div>
+            <div style={{ display:'flex', gap:24, marginTop:12, paddingTop:12, borderTop:'1px solid var(--color-divider,#dcd9d5)', flexWrap:'wrap' }}>
+                {[['Total Revenue', money(rows.reduce((s,r)=>s+Number(r.revenue||0),0))],
+                  ['Total Profit',  money(rows.reduce((s,r)=>s+Number(r.gross_profit||0),0))],
+                  ['Avg Margin',    pct(rows.reduce((s,r)=>s+Number(r.margin_pct||0),0)/Math.max(rows.length,1))],
+                  ['Transactions',  rows.reduce((s,r)=>s+Number(r.transactions||0),0)],
+                ].map(([label, val]) => (
+                    <div key={label}>
+                        <div style={{ fontSize:11, color:'var(--color-text-muted,#888)', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.04em', marginBottom:2 }}>{label}</div>
+                        <div className="price-accent" style={{ fontSize:16, fontWeight:700 }}>{val}</div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    )
 }
 
-// ─── MONTHLY P&L CHART ────────────────────────────────────────────────────────
-function MonthlyPnLChart() {
-    const { data: rows, loading, error, reload } = useFetch('/api/analytics/monthly-pnl');
-    const [hov, setHov] = useState(null);
-    const BAR_H = 180;
-    const maxVal = Math.max(...rows.map(r => parseFloat(r.revenue) || 0), 1);
-
-    const totalRev    = rows.reduce((s, r) => s + parseFloat(r.revenue       || 0), 0);
-    const totalProfit = rows.reduce((s, r) => s + parseFloat(r.gross_profit  || 0), 0);
-    const avgMargin   = rows.length ? rows.reduce((s, r) => s + parseFloat(r.margin_pct || 0), 0) / rows.length : 0;
-    const totalTxns   = rows.reduce((s, r) => s + parseInt(r.transactions    || 0), 0);
-
+// ── Dead stock heatmap cards ───────────────────────────────────────────────────
+function DeadStockHeatmap({ rows }) {
+    const maxCap = useMemo(() => Math.max(...rows.map(r => Number(r.locked_capital || 0)), 1), [rows])
+    const total  = useMemo(() => rows.reduce((s, r) => s + Number(r.locked_capital || 0), 0), [rows])
+    function heatBg(ratio) {
+        if (ratio < 0.25) return 'var(--color-success-highlight,#d4dfcc)'
+        if (ratio < 0.50) return 'var(--color-gold-highlight,#e9e0c6)'
+        if (ratio < 0.75) return 'var(--color-warning-highlight,#ddcfc6)'
+        return 'var(--color-error-highlight,#e0ced7)'
+    }
+    function heatText(ratio) {
+        if (ratio < 0.25) return 'var(--green,#437a22)'
+        if (ratio < 0.50) return 'var(--gold,#d19900)'
+        if (ratio < 0.75) return 'var(--orange,#da7101)'
+        return 'var(--red,#a12c7b)'
+    }
+    if (!rows.length) return <EmptyState msg="✅ No slow/dead stock found. All inventory is moving well." />
     return (
-        <Card title="Monthly P&L" subtitle="Last 12 months · revenue vs gross profit"
-            action={<RefreshBtn onClick={reload} loading={loading} />}>
-            {error && <ErrMsg msg={error} onRetry={reload} />}
-
-            {/* KPI strip */}
-            {!loading && rows.length > 0 && (
-                <div className="an-kpi-strip">
-                    {[['Total Revenue', fmtK(totalRev), 'var(--an-primary)'],
-                      ['Gross Profit',  fmtK(totalProfit), 'var(--an-green)'],
-                      ['Avg Margin',    fmt(avgMargin, 1) + '%', 'var(--an-blue)'],
-                      ['Transactions',  totalTxns, 'var(--an-text)']
-                    ].map(([label, val, color]) => (
-                        <div className="an-kpi-cell" key={label}>
-                            <div className="an-kpi-label">{label}</div>
-                            <div className="an-kpi-val" style={{ color }}>{val}</div>
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            {loading ? (
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 5, height: BAR_H + 32, padding: '20px 20px 0' }}>
-                    {Array.from({ length: 9 }).map((_, i) => (
-                        <div key={i} className="an-skel" style={{ flex: 1, height: `${50 + i * 12}px`, borderRadius: '3px 3px 0 0' }} />
-                    ))}
-                </div>
-            ) : rows.length === 0 ? <Empty icon="📈" msg="No transaction data yet." />
-            : (
-                <>
-                    {/* Legend */}
-                    <div style={{ display: 'flex', gap: 16, padding: '14px 20px 0', fontSize: 12, color: 'var(--an-muted)' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                            <span style={{ width: 10, height: 10, borderRadius: 2, background: 'var(--an-primary)', display: 'inline-block' }} />Revenue
-                        </span>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                            <span style={{ width: 10, height: 10, borderRadius: 2, background: 'var(--an-green)', display: 'inline-block' }} />Gross Profit
-                        </span>
-                    </div>
-                    <div className="an-chart-wrap">
-                        {/* Y-axis grid lines */}
-                        <div style={{ position: 'relative' }}>
-                            {[0, 25, 50, 75, 100].map(pct => (
-                                <div key={pct} style={{ position: 'absolute', bottom: `${pct / 100 * BAR_H}px`, left: 0, right: 0, borderTop: '1px dashed rgba(0,0,0,0.06)', pointerEvents: 'none' }} />
-                            ))}
-                            <div className="an-chart-bars">
-                                {rows.map((r, i) => {
-                                    const rev  = parseFloat(r.revenue)      || 0;
-                                    const prof = parseFloat(r.gross_profit) || 0;
-                                    const rH   = Math.max(Math.round(rev  / maxVal * BAR_H), 2);
-                                    const pH   = Math.max(Math.round(prof / maxVal * BAR_H), 2);
-                                    const lbl  = r.month ? new Date(r.month + '-01').toLocaleDateString('en-IN', { month: 'short', year: '2-digit' }) : r.month;
-                                    const isH  = hov === i;
-                                    return (
-                                        <div key={i}
-                                            className={`an-bar-group${isH ? ' hov' : ''}`}
-                                            onMouseEnter={() => setHov(i)}
-                                            onMouseLeave={() => setHov(null)}
-                                        >
-                                            {isH && (
-                                                <div className="an-tooltip">
-                                                    <div style={{ fontWeight: 700, marginBottom: 2 }}>{lbl}</div>
-                                                    <div>Revenue: <strong>{fmtK(rev)}</strong></div>
-                                                    <div>Profit: <strong style={{ color: '#6ee7b7' }}>{fmtK(prof)}</strong></div>
-                                                    <div>Margin: <strong>{fmt(r.margin_pct, 1)}%</strong></div>
-                                                    <div style={{ color: 'rgba(255,255,255,0.6)' }}>Txns: {r.transactions}</div>
-                                                </div>
-                                            )}
-                                            <div className="an-bar" style={{ flex: 1, height: rH, background: isH ? 'var(--an-primary2)' : 'var(--an-primary)' }} />
-                                            <div className="an-bar" style={{ flex: 1, height: pH, background: isH ? '#2e5c10' : 'var(--an-green)' }} />
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                            <div className="an-chart-labels">
-                                {rows.map((r, i) => {
-                                    const lbl = r.month ? new Date(r.month + '-01').toLocaleDateString('en-IN', { month: 'short', year: '2-digit' }) : '';
-                                    return <div key={i} className="an-bar-label">{lbl}</div>;
-                                })}
+        <div>
+            <p className="muted-copy" style={{ marginBottom:12 }}>Total locked capital: <strong className="risk-text">{money(total)}</strong></p>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:10 }}>
+                {rows.map(r => {
+                    const ratio = Number(r.locked_capital || 0) / maxCap
+                    const days  = Math.round(Number(r.avg_idle_days || 0))
+                    return (
+                        <div key={r.location} style={{ flex:'1 1 150px', minWidth:140, maxWidth:210, background: heatBg(ratio), borderRadius:8, padding:'0.875rem 1rem', border:`1px solid ${heatText(ratio)}33` }}>
+                            <div style={{ fontSize:12, fontWeight:700, marginBottom:4, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={r.location}>{r.location}</div>
+                            <div style={{ fontSize:18, fontWeight:800, color: heatText(ratio), fontVariantNumeric:'tabular-nums' }}>{money(r.locked_capital)}</div>
+                            <div style={{ fontSize:11, color:'var(--color-text-muted,#888)', marginTop:3 }}>{r.than_count} thans · {meters(r.total_meters)}</div>
+                            <div style={{ fontSize:11, marginTop:2, fontWeight: days>30?600:400, color: days>60?'var(--red,#a12c7b)':days>30?'var(--gold,#d19900)':'var(--color-text-muted,#888)' }}>Idle ~{days}d</div>
+                            <div style={{ marginTop:8, height:4, borderRadius:99, background:'rgba(0,0,0,0.1)' }}>
+                                <div style={{ width:`${Math.round(ratio*100)}%`, height:'100%', borderRadius:99, background: heatText(ratio), transition:'width 400ms ease' }} />
                             </div>
                         </div>
-                    </div>
-                </>
-            )}
-        </Card>
-    );
+                    )
+                })}
+            </div>
+        </div>
+    )
 }
 
-// ─── DEAD STOCK HEATMAP ───────────────────────────────────────────────────────
-function DeadStockHeatmap() {
-    const { data: rows, loading, error, reload } = useFetch('/api/analytics/dead-stock-by-location');
-    const maxCap  = Math.max(...rows.map(r => parseFloat(r.locked_capital) || 0), 1);
-    const totalCap = rows.reduce((s, r) => s + parseFloat(r.locked_capital || 0), 0);
+// ── Main export ───────────────────────────────────────────────────────────────────
+export default function AnalyticsDashboard({ user }) {
+    const [view,         setView]         = useState('top-retailers')
+    const [topRetailers, setTopRetailers] = useState([])
+    const [margSupplier, setMargSupplier] = useState([])
+    const [margRetailer, setMargRetailer] = useState([])
+    const [aging,        setAging]        = useState([])
+    const [pnl,          setPnl]          = useState([])
+    const [heatmap,      setHeatmap]      = useState([])
+    const [balePerf,     setBalePerf]     = useState({ best: [], worst: [] })
+    const [baleMode,     setBaleMode]     = useState('best')
+    const [loading,      setLoading]      = useState(true)
+    const [toast,        setToast]        = useState(null)
 
-    function heatBg(pct) {
-        if (pct < 0.2) return { bg: '#edf7e9', border: '#437a2230', text: '#437a22' };
-        if (pct < 0.4) return { bg: '#fef9ec', border: '#b07a0030', text: '#b07a00' };
-        if (pct < 0.6) return { bg: '#fff4ec', border: '#c5570030', text: '#c55700' };
-        if (pct < 0.8) return { bg: '#fdf0f6', border: '#a12c7b30', text: '#a12c7b' };
-        return { bg: '#fce8f3', border: '#a12c7b50', text: '#a12c7b' };
+    const authHeader = useCallback(
+        () => ({ 'x-user-id': String(user.user_id), 'x-user-role': user.role }),
+        [user.user_id, user.role]
+    )
+
+    const showToast = (msg, type) => {
+        setToast({ msg, type })
+        setTimeout(() => setToast(null), 3500)
     }
 
-    return (
-        <Card title="Dead Stock Heatmap by Warehouse"
-            subtitle="Slow-moving & dead inventory · locked capital per location"
-            action={<RefreshBtn onClick={reload} loading={loading} />}>
-            {error && <ErrMsg msg={error} onRetry={reload} />}
+    const load = useCallback(async () => {
+        setLoading(true)
+        try {
+            const [trR, msR, mrR, agR, pnlR, hmR, bbR, bwR] = await Promise.all([
+                API.get('/analytics/top-retailers',         { headers: authHeader() }),
+                API.get('/analytics/margin-per-supplier',   { headers: authHeader() }),
+                API.get('/analytics/margin-per-retailer',   { headers: authHeader() }),
+                API.get('/analytics/payment-aging',         { headers: authHeader() }),
+                API.get('/analytics/monthly-pnl',           { headers: authHeader() }),
+                API.get('/analytics/dead-stock-by-location',{ headers: authHeader() }),
+                API.get('/analytics/bale-performance',      { headers: authHeader(), params: { mode: 'best',  limit: 5 } }),
+                API.get('/analytics/bale-performance',      { headers: authHeader(), params: { mode: 'worst', limit: 5 } }),
+            ])
+            setTopRetailers(Array.isArray(trR.data)     ? trR.data  : [])
+            setMargSupplier(Array.isArray(msR.data)     ? msR.data  : [])
+            setMargRetailer(Array.isArray(mrR.data)     ? mrR.data  : [])
+            setAging(        Array.isArray(agR.data)    ? agR.data  : [])
+            setPnl(          Array.isArray(pnlR.data)   ? pnlR.data : [])
+            setHeatmap(      Array.isArray(hmR.data)    ? hmR.data  : [])
+            setBalePerf({
+                best:  Array.isArray(bbR.data?.rows) ? bbR.data.rows : [],
+                worst: Array.isArray(bwR.data?.rows) ? bwR.data.rows : [],
+            })
+        } catch (err) {
+            showToast(err?.response?.data?.error || err.message || 'Failed to load analytics', 'error')
+        } finally {
+            setLoading(false)
+        }
+    }, [authHeader])
 
-            {!loading && rows.length > 0 && (
-                <div className="an-kpi-strip">
-                    <div className="an-kpi-cell">
-                        <div className="an-kpi-label">Locked Capital</div>
-                        <div className="an-kpi-val" style={{ color: 'var(--an-red)' }}>{fmtK(totalCap)}</div>
-                    </div>
-                    <div className="an-kpi-cell">
-                        <div className="an-kpi-label">Locations</div>
-                        <div className="an-kpi-val" style={{ color: 'var(--an-text)' }}>{rows.length}</div>
-                    </div>
-                    <div className="an-kpi-cell">
-                        <div className="an-kpi-label">Total Thans</div>
-                        <div className="an-kpi-val" style={{ color: 'var(--an-text)' }}>{rows.reduce((s, r) => s + parseInt(r.than_count || 0), 0)}</div>
-                    </div>
-                    <div className="an-kpi-cell">
-                        <div className="an-kpi-label">Total Meters</div>
-                        <div className="an-kpi-val" style={{ color: 'var(--an-text)' }}>{fmt(rows.reduce((s, r) => s + parseFloat(r.total_meters || 0), 0))} m</div>
-                    </div>
-                </div>
-            )}
+    useEffect(() => { load() }, [load])
 
-            {loading ? (
-                <div className="an-heat-grid">
-                    {Array.from({ length: 6 }).map((_, i) => <div key={i} className="an-skel" style={{ height: 110, borderRadius: 8 }} />)}
-                </div>
-            ) : rows.length === 0 ? <Empty icon="✅" msg="No slow or dead stock found. All inventory is moving well." />
-            : (
-                <div className="an-heat-grid">
-                    {rows.map(r => {
-                        const cap  = parseFloat(r.locked_capital) || 0;
-                        const pct  = cap / maxCap;
-                        const days = Math.round(parseFloat(r.avg_idle_days) || 0);
-                        const { bg, border, text } = heatBg(pct);
-                        return (
-                            <div key={r.location} className="an-heat-card"
-                                style={{ background: bg, borderColor: border }}>
-                                <div className="an-heat-loc" title={r.location}>
-                                    <svg style={{ display: 'inline', verticalAlign: 'middle', marginRight: 5, opacity: 0.5 }} width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                                    {r.location}
-                                </div>
-                                <div className="an-heat-val" style={{ color: text }}>{fmtK(cap)}</div>
-                                <div className="an-heat-meta">{fmt(r.than_count)} thans · {fmt(r.total_meters)} m</div>
-                                <div className="an-heat-days" style={{ color: days > 60 ? 'var(--an-red)' : days > 30 ? 'var(--an-orange)' : 'var(--an-muted)' }}>
-                                    Idle ~{days} days
-                                </div>
-                                <div className="an-heat-bar-track">
-                                    <div className="an-heat-bar-fill" style={{ width: Math.round(pct * 100) + '%', background: text }} />
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
-        </Card>
-    );
-}
+    const totalRevenue  = useMemo(() => topRetailers.reduce((s,r) => s + Number(r.revenue  || 0), 0), [topRetailers])
+    const totalMargin   = useMemo(() => topRetailers.reduce((s,r) => s + Number(r.margin   || 0), 0), [topRetailers])
+    const totalOutstand = useMemo(() => topRetailers.reduce((s,r) => s + Number(r.outstanding_balance || 0), 0), [topRetailers])
+    const agingTotal    = useMemo(() => aging.reduce((s,r) => s + Number(r.outstanding_balance || 0), 0), [aging])
+    const aging60plus   = useMemo(() => aging.reduce((s,r) => s + Number(r.bucket_60_plus  || 0), 0), [aging])
 
-// ─── MAIN ─────────────────────────────────────────────────────────────────────
-const VIEWS = [
-    { id: 'top-retailers',   label: 'Top Retailers',    icon: '🏆' },
-    { id: 'margin-supplier', label: 'By Supplier',      icon: '🏭' },
-    { id: 'margin-retailer', label: 'By Retailer',      icon: '🏪' },
-    { id: 'payment-aging',   label: 'Payment Aging',    icon: '⏱' },
-    { id: 'monthly-pnl',     label: 'Monthly P&L',      icon: '📈' },
-    { id: 'dead-stock',      label: 'Dead Stock',        icon: '📦' },
-];
+    if (loading) return <div className="loading">Loading analytics dashboard…</div>
 
-export default function AnalyticsDashboard({ user }) {
-    const [view, setView] = useState('top-retailers');
-    const now = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+    const baleRows = baleMode === 'best' ? balePerf.best : balePerf.worst
 
     return (
-        <div className="an-root" style={{ padding: '20px 24px', minHeight: '100%' }}>
-            <style>{STYLES}</style>
+        <div className="ops-page">
+            {toast && <div className={`toast toast-${toast.type}`}>{toast.msg}</div>}
 
-            {/* Page header */}
-            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 8 }}>
+            {/* ── Hero */}
+            <section className="card ops-hero">
                 <div>
-                    <h2 style={{ margin: 0, fontSize: 22, fontWeight: 750, letterSpacing: '-0.025em', color: 'var(--an-text)' }}>Analytics</h2>
-                    <p style={{ margin: '3px 0 0', fontSize: 12, color: 'var(--an-muted)' }}>Revenue intelligence · margin analysis · payment aging · dead stock</p>
+                    <p className="eyebrow">Revenue Intelligence</p>
+                    <h2>Analytics Dashboard</h2>
+                    <p>Retailer rankings, supplier margin, payment aging, monthly P&amp;L, and dead-stock geography — all in one place.</p>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--an-faint)', fontWeight: 500 }}>{now}</div>
+                <div className={`ops-risk ${aging60plus > 0 ? 'risk-high' : totalOutstand > 0 ? 'risk-mid' : 'risk-low'}`}>
+                    <span>Outstanding receivables</span>
+                    <strong>{money(agingTotal)}</strong>
+                    <small>{money(aging60plus)} overdue 60+ days</small>
+                    <small>{aging.length} retailer{aging.length !== 1 ? 's' : ''} with open balances</small>
+                </div>
+            </section>
+
+            {/* ── KPI strip */}
+            <section className="metric-grid">
+                <KPI label="Total Revenue"     value={money(totalRevenue)} />
+                <KPI label="Total Margin"      value={money(totalMargin)} />
+                <KPI label="Outstanding"       value={money(totalOutstand)}  accent={totalOutstand  > 0 ? 'warning' : ''} />
+                <KPI label="60+ Day Overdue"   value={money(aging60plus)}    accent={aging60plus    > 0 ? 'danger'  : ''} />
+                <KPI label="Retailers Tracked" value={topRetailers.length} />
+                <KPI label="Suppliers Tracked" value={margSupplier.length} />
+            </section>
+
+            {/* ── View tabs */}
+            <div className="ds-controls" style={{ marginBottom: '1.25rem' }}>
+                <div className="ds-filter-chips">
+                    {VIEWS.map(v => (
+                        <button key={v.id} className={`ds-chip ${view === v.id ? 'ds-chip--active' : ''}`} onClick={() => setView(v.id)}>
+                            {v.label}
+                        </button>
+                    ))}
+                </div>
+                <button className="btn btn-secondary" onClick={load} style={{ marginLeft: 'auto' }}>↻ Refresh</button>
             </div>
 
-            {/* Tab nav */}
-            <div className="an-nav" style={{ marginBottom: 20 }}>
-                {VIEWS.map(v => (
-                    <button key={v.id} className={`an-nav-btn${view === v.id ? ' active' : ''}`} onClick={() => setView(v.id)}>
-                        <span style={{ marginRight: 5 }}>{v.icon}</span>{v.label}
-                    </button>
-                ))}
-            </div>
+            {/* ── Top Retailers */}
+            {view === 'top-retailers' && (
+                <section className="card compact-panel">
+                    <h2>Top Retailers by Revenue</h2>
+                    <p className="muted-copy">All-time · ranked by total revenue · top 10</p>
+                    {topRetailers.length ? (
+                        <table style={{ marginTop: 12 }}>
+                            <thead>
+                                <tr><th>#</th><th>Shop</th><th>Location</th><th>Payment</th><th>Orders</th><th>Meters</th><th>Revenue</th><th>Margin</th><th>Margin %</th><th>Outstanding</th></tr>
+                            </thead>
+                            <tbody>
+                                {topRetailers.map((r, i) => (
+                                    <tr key={r.retailer_id}>
+                                        <td className="price-accent">#{i + 1}</td>
+                                        <td>
+                                            <strong>{r.shop_name}</strong>
+                                            {r.preferred_categories && <><br /><small style={{ color:'var(--color-text-muted,#888)' }}>{r.preferred_categories}</small></>}
+                                        </td>
+                                        <td>{r.market_location || '—'}</td>
+                                        <td><span className={paymentPillClass(r.payment_pattern)}>{r.payment_pattern?.replace('_',' ') || '—'}</span></td>
+                                        <td>{Number(r.order_count || 0)}</td>
+                                        <td>{meters(r.meters_bought)}</td>
+                                        <td className="price-accent">{money(r.revenue)}</td>
+                                        <td className="price-accent">{money(r.margin)}</td>
+                                        <td><span className={marginPillClass(r.margin_pct)}>{pct(r.margin_pct)}</span></td>
+                                        <td className={Number(r.outstanding_balance) > 0 ? 'risk-text' : ''}>{money(r.outstanding_balance)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : <EmptyState msg="No sales data yet. Record transactions to see top retailers." />}
+                </section>
+            )}
 
-            {/* Views */}
-            {view === 'top-retailers'   && <TopRetailersTable />}
-            {view === 'margin-supplier' && <MarginPerSupplierTable />}
-            {view === 'margin-retailer' && <MarginPerRetailerTable />}
-            {view === 'payment-aging'   && <PaymentAgingTable />}
-            {view === 'monthly-pnl'     && <MonthlyPnLChart />}
-            {view === 'dead-stock'      && <DeadStockHeatmap />}
+            {/* ── Margin per Supplier */}
+            {view === 'margin-supplier' && (
+                <section className="card compact-panel">
+                    <h2>Margin per Supplier</h2>
+                    <p className="muted-copy">Realized margin, ₹/meter efficiency, and capital utilisation</p>
+                    {margSupplier.length ? (
+                        <table style={{ marginTop: 12 }}>
+                            <thead>
+                                <tr><th>Supplier</th><th>Quality</th><th>Delay</th><th>Bales</th><th>Thans</th><th>Meters Sold</th><th>Margin ₹</th><th>₹/Meter</th><th>Capital Eff.</th></tr>
+                            </thead>
+                            <tbody>
+                                {margSupplier.map(s => (
+                                    <tr key={s.supplier_id}>
+                                        <td>
+                                            <strong>{s.supplier_name}</strong>
+                                            {s.trend_alignment && <><br /><small style={{ color:'var(--color-text-muted,#888)' }}>{s.trend_alignment}</small></>}
+                                        </td>
+                                        <td>{Number(s.quality_rating || 0).toFixed(1)}/5</td>
+                                        <td><span className="mini-pill">{s.delay_frequency || '—'}</span></td>
+                                        <td>{Number(s.bales_received || 0)}</td>
+                                        <td>{Number(s.thans_created  || 0)}</td>
+                                        <td>{meters(s.meters_sold)}</td>
+                                        <td className="price-accent">{money(s.realized_margin)}</td>
+                                        <td className="price-accent">{money(s.margin_per_meter)}/m</td>
+                                        <td><span className={`mini-pill ${Number(s.capital_efficiency_pct) >= 30 ? '' : 'warning'}`}>{pct(s.capital_efficiency_pct)}</span></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : <EmptyState msg="No supplier transaction data yet." />}
+                </section>
+            )}
+
+            {/* ── Margin per Retailer */}
+            {view === 'margin-retailer' && (
+                <section className="card compact-panel">
+                    <h2>Margin per Retailer</h2>
+                    <p className="muted-copy">Credit risk & margin breakdown · top 15 by margin</p>
+                    {margRetailer.length ? (
+                        <table style={{ marginTop: 12 }}>
+                            <thead>
+                                <tr><th>#</th><th>Shop</th><th>Location</th><th>Payment</th><th>Orders</th><th>Revenue</th><th>Total Margin</th><th>Margin %</th><th>Avg/Order</th><th>Outstanding</th></tr>
+                            </thead>
+                            <tbody>
+                                {margRetailer.map((r, i) => (
+                                    <tr key={r.retailer_id}>
+                                        <td className="price-accent">#{i + 1}</td>
+                                        <td>
+                                            <strong>{r.shop_name}</strong>
+                                            {r.preferred_categories && <><br /><small style={{ color:'var(--color-text-muted,#888)' }}>{r.preferred_categories}</small></>}
+                                        </td>
+                                        <td>{r.market_location || '—'}</td>
+                                        <td><span className={paymentPillClass(r.payment_pattern)}>{r.payment_pattern?.replace('_',' ') || '—'}</span></td>
+                                        <td>{Number(r.order_count || 0)}</td>
+                                        <td>{money(r.revenue)}</td>
+                                        <td className="price-accent">{money(r.total_margin)}</td>
+                                        <td><span className={marginPillClass(r.margin_pct)}>{pct(r.margin_pct)}</span></td>
+                                        <td className="price-accent">{money(r.avg_margin_per_order)}</td>
+                                        <td className={Number(r.outstanding_balance) > 0 ? 'risk-text' : ''}>{money(r.outstanding_balance)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : <EmptyState msg="No transaction data yet." />}
+                </section>
+            )}
+
+            {/* ── Payment Aging */}
+            {view === 'payment-aging' && (
+                <section className="card compact-panel">
+                    <h2>Retailer Payment Aging</h2>
+                    <p className="muted-copy">Unpaid & partial transactions bucketed by days outstanding</p>
+                    {aging.length > 0 && (
+                        <section className="metric-grid" style={{ marginTop: 12, marginBottom: 4 }}>
+                            <KPI label="0–30 Days"           value={money(aging.reduce((s,r)=>s+Number(r.bucket_0_30||0),0))} />
+                            <KPI label="31–60 Days"          value={money(aging.reduce((s,r)=>s+Number(r.bucket_31_60||0),0))} accent="warning" />
+                            <KPI label="60+ Days (Overdue)"  value={money(aging60plus)} accent={aging60plus > 0 ? 'danger' : ''} />
+                            <KPI label="Total Outstanding"   value={money(agingTotal)}  accent={agingTotal  > 0 ? 'warning' : ''} />
+                        </section>
+                    )}
+                    {aging.length ? (
+                        <table style={{ marginTop: 12 }}>
+                            <thead>
+                                <tr><th>Shop</th><th>Location</th><th>Payment</th><th>0–30 d</th><th>31–60 d</th><th>60+ d</th><th>Outstanding</th><th>Unpaid Txns</th><th>Last Sale</th></tr>
+                            </thead>
+                            <tbody>
+                                {aging.map(r => {
+                                    const b60 = Number(r.bucket_60_plus || 0)
+                                    const b31 = Number(r.bucket_31_60   || 0)
+                                    return (
+                                        <tr key={r.retailer_id}>
+                                            <td>
+                                                <strong>{r.shop_name}</strong>
+                                                {b60 > 0 && <><br /><span style={{ fontSize:10, color:'var(--red,#a12c7b)', fontWeight:700 }}>OVERDUE</span></>}
+                                            </td>
+                                            <td>{r.market_location || '—'}</td>
+                                            <td><span className={paymentPillClass(r.payment_pattern)}>{r.payment_pattern?.replace('_',' ') || '—'}</span></td>
+                                            <td>{Number(r.bucket_0_30 || 0) > 0 ? money(r.bucket_0_30) : '—'}</td>
+                                            <td className={b31 > 0 ? 'price-accent' : ''}>{b31 > 0 ? money(b31) : '—'}</td>
+                                            <td className={b60 > 0 ? 'risk-text' : ''}><strong>{b60 > 0 ? money(b60) : '—'}</strong></td>
+                                            <td className="risk-text"><strong>{money(r.outstanding_balance)}</strong></td>
+                                            <td style={{ textAlign:'center' }}><span className="mini-pill danger">{r.unpaid_count}</span></td>
+                                            <td>{r.last_transaction ? new Date(r.last_transaction).toLocaleDateString('en-IN') : '—'}</td>
+                                        </tr>
+                                    )
+                                })}
+                            </tbody>
+                        </table>
+                    ) : <EmptyState msg="✅ All retailers are fully paid up." />}
+                </section>
+            )}
+
+            {/* ── Monthly P&L */}
+            {view === 'monthly-pnl' && (
+                <section className="ops-grid two">
+                    <section className="card compact-panel">
+                        <h2>Monthly P&amp;L Chart</h2>
+                        <p className="muted-copy">Last 12 months · revenue vs gross profit</p>
+                        <div style={{ marginTop: 12 }}>
+                            {pnl.length ? <PnLBarChart rows={pnl} /> : <EmptyState msg="No transaction data yet." />}
+                        </div>
+                    </section>
+                    <section className="card compact-panel">
+                        <h2>Month-by-Month Breakdown</h2>
+                        {pnl.length ? (
+                            <table style={{ marginTop: 12 }}>
+                                <thead>
+                                    <tr><th>Month</th><th>Txns</th><th>Revenue</th><th>COGS</th><th>Gross Profit</th><th>Margin %</th></tr>
+                                </thead>
+                                <tbody>
+                                    {[...pnl].reverse().map(r => (
+                                        <tr key={r.month}>
+                                            <td>{r.month ? new Date(r.month+'-01').toLocaleDateString('en-IN',{month:'short',year:'numeric'}) : r.month}</td>
+                                            <td>{Number(r.transactions || 0)}</td>
+                                            <td>{money(r.revenue)}</td>
+                                            <td>{money(r.cogs)}</td>
+                                            <td className="price-accent">{money(r.gross_profit)}</td>
+                                            <td><span className={marginPillClass(r.margin_pct)}>{pct(r.margin_pct)}</span></td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        ) : <EmptyState msg="No transaction data yet." />}
+                    </section>
+                </section>
+            )}
+
+            {/* ── Dead Stock Map */}
+            {view === 'dead-stock-map' && (
+                <section className="card compact-panel">
+                    <h2>Dead Stock Heatmap by Warehouse</h2>
+                    <p className="muted-copy">Slow-moving & dead inventory · locked capital per location</p>
+                    <div style={{ marginTop: 12 }}><DeadStockHeatmap rows={heatmap} /></div>
+                </section>
+            )}
+
+            {/* ── Bale Performance (persistent) */}
+            <section className="card compact-panel">
+                <div className="section-heading inline" style={{ marginBottom: '1rem' }}>
+                    <h2>Bale Performance</h2>
+                    <div style={{ display:'flex', gap:'0.5rem' }}>
+                        <button className={`btn ${baleMode==='best'  ? 'btn-primary' : 'btn-outline'}`} onClick={() => setBaleMode('best')}>🏆 Best</button>
+                        <button className={`btn ${baleMode==='worst' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setBaleMode('worst')}>⚠ Worst</button>
+                    </div>
+                </div>
+                {baleRows.length ? (
+                    <table>
+                        <thead>
+                            <tr><th>Bale</th><th>Supplier</th><th>Thans</th><th>Meters Sold</th><th>Remaining</th><th>Revenue</th><th>Total Margin</th><th>Margin %</th><th>Sell-Through</th><th>Days Old</th></tr>
+                        </thead>
+                        <tbody>
+                            {baleRows.map(row => (
+                                <tr key={row.bale_id}>
+                                    <td>{row.bale_code}</td>
+                                    <td>{row.supplier_name || '—'}</td>
+                                    <td>{Number(row.than_count || 0)}</td>
+                                    <td>{meters(row.meters_sold)}</td>
+                                    <td>{meters(row.meters_remaining)}</td>
+                                    <td>{money(row.revenue)}</td>
+                                    <td className="price-accent">{money(row.total_margin)}</td>
+                                    <td><span className={`mini-pill ${Number(row.margin_pct)>=25?'':Number(row.margin_pct)>=12?'warning':'danger'}`}>{row.margin_pct != null ? pct(row.margin_pct) : '—'}</span></td>
+                                    <td><span className={`mini-pill ${Number(row.sell_through_pct)>=70?'':'warning'}`}>{row.sell_through_pct != null ? pct(row.sell_through_pct) : '—'}</span></td>
+                                    <td>{row.days_since_arrival != null ? `${row.days_since_arrival}d` : '—'}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                ) : <EmptyState msg={baleMode==='best' ? 'No bale sales data yet.' : 'No underperforming bales found.'} />}
+            </section>
         </div>
-    );
+    )
 }
