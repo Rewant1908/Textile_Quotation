@@ -3,13 +3,13 @@
 -- Phase 5 database fixes — run ONCE on your MariaDB instance
 -- Safe to re-run: ADD COLUMN IF NOT EXISTS guards used throughout.
 -- FK constraints use DROP IF EXISTS + ADD pattern (MariaDB <10.5 compat).
--- ORDER: columns added BEFORE indexes that reference them.
+-- AFTER clauses removed — new columns appended at end of each table.
 -- =============================================================================
 
 -- ── Fix #1: quotation_number column ──────────────────────────────────────────
 ALTER TABLE quotations
     ADD COLUMN IF NOT EXISTS quotation_number VARCHAR(20) NULL UNIQUE
-        COMMENT 'Human-readable ref: KTQ-YYYY-000001. Set by app after INSERT.' AFTER quotation_id;
+        COMMENT 'Human-readable ref: KTQ-YYYY-000001. Set by app after INSERT.';
 
 -- ── Fix #2: quotations.status ENUM extended ───────────────────────────────────
 -- draft → sent → accepted | declined  (pending kept as legacy alias for draft)
@@ -22,8 +22,7 @@ ALTER TABLE quotations
 -- ── Fix #4: product_id on transactions ────────────────────────────────────────
 ALTER TABLE transactions
     ADD COLUMN IF NOT EXISTS product_id INT NULL
-        COMMENT 'Denormalised from thans.product_id at sale time for analytics joins.'
-        AFTER retailer_id;
+        COMMENT 'Denormalised from thans.product_id at sale time for analytics joins.';
 
 ALTER TABLE transactions
     DROP FOREIGN KEY IF EXISTS fk_transactions_product;
@@ -36,23 +35,22 @@ ALTER TABLE transactions
 -- ── Fix #7: soft-delete columns — MUST come before indexes below ────────────────
 ALTER TABLE retailers
     ADD COLUMN IF NOT EXISTS is_deleted  TINYINT(1) NOT NULL DEFAULT 0
-        COMMENT 'Soft delete flag. 1 = deleted.' AFTER outstanding_balance,
-    ADD COLUMN IF NOT EXISTS deleted_at  DATETIME   NULL AFTER is_deleted,
+        COMMENT 'Soft delete flag. 1 = deleted.',
+    ADD COLUMN IF NOT EXISTS deleted_at  DATETIME   NULL,
     ADD COLUMN IF NOT EXISTS deleted_by  INT        NULL
-        COMMENT 'user_id who deleted this row.' AFTER deleted_at;
+        COMMENT 'user_id who deleted this row.';
 
 ALTER TABLE suppliers
     ADD COLUMN IF NOT EXISTS is_deleted  TINYINT(1) NOT NULL DEFAULT 0
-        COMMENT 'Soft delete flag. 1 = deleted.' AFTER notes,
-    ADD COLUMN IF NOT EXISTS deleted_at  DATETIME   NULL AFTER is_deleted,
+        COMMENT 'Soft delete flag. 1 = deleted.',
+    ADD COLUMN IF NOT EXISTS deleted_at  DATETIME   NULL,
     ADD COLUMN IF NOT EXISTS deleted_by  INT        NULL
-        COMMENT 'user_id who deleted this row.' AFTER deleted_at;
+        COMMENT 'user_id who deleted this row.';
 
 -- ── Fix #9: assigned_user_id on retailers ─────────────────────────────────────
 ALTER TABLE retailers
     ADD COLUMN IF NOT EXISTS assigned_user_id INT NULL
-        COMMENT 'FK → users.user_id — salesperson who owns this retailer account.'
-        AFTER deleted_by;
+        COMMENT 'FK → users.user_id — salesperson who owns this retailer account.';
 
 ALTER TABLE retailers
     DROP FOREIGN KEY IF EXISTS fk_retailers_assigned_user;
@@ -81,14 +79,12 @@ CREATE INDEX IF NOT EXISTS idx_thans_speed_status
 CREATE INDEX IF NOT EXISTS idx_thans_stock
     ON thans (remaining_stock);
 
--- soft-delete indexes (columns added above in Fix #7)
 CREATE INDEX IF NOT EXISTS idx_retailers_deleted
     ON retailers (is_deleted);
 
 CREATE INDEX IF NOT EXISTS idx_suppliers_deleted
     ON suppliers (is_deleted);
 
--- assigned_user_id index (column added above in Fix #9)
 CREATE INDEX IF NOT EXISTS idx_retailers_assigned_user
     ON retailers (assigned_user_id);
 
