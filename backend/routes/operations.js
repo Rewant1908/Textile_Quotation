@@ -2,20 +2,14 @@
  * /api/operations, /api/thans, /api/inventory
  *
  * Phase 7 additions:
- *  1. retailerSignals — retailer affinity metric
- *     category_affinity  : top product category by meters bought per retailer
- *     affinity_score     : affinity_category_meters / total_meters_bought (0-1)
- *  2. seasonalMovement — monthly sold meters vs 3-month rolling average per category
- *  3. recalculateSpeeds() — reads dead_stock_days from app_settings (configurable threshold)
- *
- * Phase 5 fixes retained:
- *  2. recalculateSpeeds() dead threshold changed from 90 → DEAD_DAYS (60)
- *  6. POST /api/thans/:id/image — image_url upload endpoint (base64 or URL body)
+ *  1. retailerSignals — affinity_category + affinity_score per retailer
+ *  2. seasonalMovement — monthly sold meters + 3-month rolling avg per category
+ *  3. recalculateSpeeds() — reads dead_stock_days from app_settings
  */
 import express from 'express';
 import pool from '../db.js';
 import { checkPermission } from '../middleware/checkPermission.js';
-import { cache, invalidate } from '../middleware/cacheMiddleware.js';
+import { cache } from '../middleware/cacheMiddleware.js';
 import { flush } from '../cache.js';
 import { DEAD_DAYS } from './sales.js';
 import { getDeadStockDays } from './settings.js';
@@ -77,16 +71,11 @@ router.get('/thans',
 router.post('/thans/:id/image', checkPermission('MANAGE_PRODUCTS'), async (req, res) => {
     const { image_url } = req.body;
     const thanId = Number(req.params.id);
-
-    if (!image_url?.trim()) {
-        return res.status(400).json({ error: 'image_url is required' });
-    }
+    if (!image_url?.trim()) return res.status(400).json({ error: 'image_url is required' });
     const isUrl    = /^https?:\/\//i.test(image_url);
     const isBase64 = /^data:image\//i.test(image_url);
-    if (!isUrl && !isBase64) {
+    if (!isUrl && !isBase64)
         return res.status(400).json({ error: 'image_url must be a https:// URL or data:image/ URI' });
-    }
-
     let conn;
     try {
         conn = await pool.getConnection();
@@ -94,9 +83,7 @@ router.post('/thans/:id/image', checkPermission('MANAGE_PRODUCTS'), async (req, 
             'UPDATE thans SET image_url = ? WHERE than_id = ?',
             [image_url.trim(), thanId]
         );
-        if (Number(result.affectedRows) === 0) {
-            return res.status(404).json({ error: 'Than not found' });
-        }
+        if (Number(result.affectedRows) === 0) return res.status(404).json({ error: 'Than not found' });
         flush('thans:*').catch(() => {});
         res.json({ success: true, than_id: thanId, image_url: image_url.trim() });
     } catch (err) {
@@ -114,7 +101,6 @@ router.get('/dashboard',
         try {
             conn = await pool.getConnection();
 
-            // ── 1. Summary KPIs ───────────────────────────────────────────────
             const [summary] = await conn.query(
                 `SELECT
                     COUNT(DISTINCT b.bale_id)  AS total_bales,
@@ -130,7 +116,6 @@ router.get('/dashboard',
                  LEFT JOIN bales b ON t.bale_id = b.bale_id`
             );
 
-            // ── 2. Category movement ──────────────────────────────────────────
             const categoryMovement = await conn.query(
                 `SELECT
                     COALESCE(p.category, t.fabric_type) AS category,
@@ -154,17 +139,13 @@ router.get('/dashboard',
                  LIMIT 8`
             );
 
-            // ── 3. Dead stock ─────────────────────────────────────────────────
             const deadStock = await conn.query(
                 `SELECT
                     t.than_id, t.than_code, t.fabric_type, t.color, t.design,
-                    t.remaining_stock, t.cost_per_meter, t.selling_price,
-                    t.image_url,
+                    t.remaining_stock, t.cost_per_meter, t.selling_price, t.image_url,
                     ROUND(t.remaining_stock * t.cost_per_meter, 2) AS cost_value,
                     t.warehouse_location, t.movement_speed,
-                    DATEDIFF(CURDATE(),
-                        DATE(COALESCE(MAX(im.movement_date), t.created_at))
-                    ) AS days_without_movement
+                    DATEDIFF(CURDATE(), DATE(COALESCE(MAX(im.movement_date), t.created_at))) AS days_without_movement
                  FROM thans t
                  LEFT JOIN inventory_movements im ON im.than_id = t.than_id
                  WHERE t.remaining_stock > 0
@@ -173,38 +154,23 @@ router.get('/dashboard',
                     t.remaining_stock, t.cost_per_meter, t.selling_price,
                     t.image_url, t.warehouse_location, t.movement_speed, t.created_at
                  ORDER BY
-                    CASE t.movement_speed
-                        WHEN 'dead' THEN 0
-                        WHEN 'slow' THEN 1
-                        WHEN 'new'  THEN 2
-                        ELSE 3
-                    END,
+                    CASE t.movement_speed WHEN 'dead' THEN 0 WHEN 'slow' THEN 1 WHEN 'new' THEN 2 ELSE 3 END,
                     days_without_movement DESC, t.remaining_stock DESC
                  LIMIT 15`
             );
 
-            // ── 4. Retailer signals + affinity metric (Phase 7) ───────────────
-            //
-            // affinity_category  : product category with the most meters bought by this retailer
-            // affinity_score     : affinity_category_meters / total_meters_bought  (0.00–1.00)
-            //
-            // Strategy:
-            //   a) compute per-retailer per-category meters in subquery cat_sales
-            //   b) rank by meters DESC within each retailer using ROW_NUMBER()
-            //   c) join the top-1 row back to the main retailer query
             const retailerSignals = await conn.query(
                 `SELECT
                     r.retailer_id, r.shop_name, r.market_location, r.payment_pattern,
                     r.preferred_categories, r.preferred_price_segment, r.outstanding_balance,
                     r.preferred_categories_json,
-                    COUNT(tx.transaction_id)          AS order_count,
-                    COALESCE(SUM(tx.quantity), 0)      AS meters_bought,
-                    COALESCE(SUM(tx.revenue), 0)       AS revenue,
-                    COALESCE(SUM(tx.margin), 0)        AS margin,
+                    COUNT(tx.transaction_id)     AS order_count,
+                    COALESCE(SUM(tx.quantity), 0) AS meters_bought,
+                    COALESCE(SUM(tx.revenue), 0)  AS revenue,
+                    COALESCE(SUM(tx.margin), 0)   AS margin,
                     aff.affinity_category,
                     ROUND(
-                        COALESCE(aff.affinity_meters, 0) /
-                        NULLIF(COALESCE(SUM(tx.quantity), 0), 0),
+                        COALESCE(aff.affinity_meters, 0) / NULLIF(COALESCE(SUM(tx.quantity), 0), 0),
                         3
                     ) AS affinity_score
                  FROM retailers r
@@ -214,7 +180,6 @@ router.get('/dashboard',
                     FROM transactions
                  ) tx ON r.retailer_id = tx.retailer_id
                  LEFT JOIN (
-                    -- top category per retailer by meters
                     SELECT retailer_id, category AS affinity_category, cat_meters AS affinity_meters
                     FROM (
                         SELECT
@@ -241,15 +206,14 @@ router.get('/dashboard',
                  LIMIT 8`
             );
 
-            // ── 5. Supplier signals ───────────────────────────────────────────
             const supplierSignals = await conn.query(
                 `SELECT
                     s.supplier_id, s.supplier_name, s.quality_rating,
                     s.delay_frequency, s.trend_alignment,
-                    COUNT(DISTINCT b.bale_id)    AS bales_received,
-                    COUNT(DISTINCT t.than_id)    AS thans_created,
-                    COALESCE(SUM(tx.quantity), 0) AS meters_sold,
-                    COALESCE(SUM(tx.margin), 0)   AS realized_margin
+                    COUNT(DISTINCT b.bale_id)     AS bales_received,
+                    COUNT(DISTINCT t.than_id)     AS thans_created,
+                    COALESCE(SUM(tx.quantity), 0)  AS meters_sold,
+                    COALESCE(SUM(tx.margin), 0)    AS realized_margin
                  FROM suppliers s
                  LEFT JOIN bales b ON s.supplier_id = b.supplier_id
                  LEFT JOIN thans t ON b.bale_id = t.bale_id
@@ -261,19 +225,11 @@ router.get('/dashboard',
                  ORDER BY realized_margin DESC, meters_sold DESC`
             );
 
-            // ── 6. Seasonal movement (Phase 7) ────────────────────────────────
-            //
-            // Returns last 6 months of monthly sold meters per category,
-            // plus a 3-month rolling average for each month/category.
-            //
-            // rolling_avg_3m = AVG of current month + up to 2 prior months
-            // (computed in JS after fetching to avoid complex window-function syntax
-            //  across MariaDB versions)
             const seasonalRaw = await conn.query(
                 `SELECT
-                    COALESCE(p.category, t.fabric_type)         AS category,
-                    DATE_FORMAT(tx.transaction_date, '%Y-%m')   AS month,
-                    SUM(tx.quantity)                             AS sold_meters
+                    COALESCE(p.category, t.fabric_type)       AS category,
+                    DATE_FORMAT(tx.transaction_date, '%Y-%m') AS month,
+                    SUM(tx.quantity)                           AS sold_meters
                  FROM transactions tx
                  LEFT JOIN thans    t ON tx.than_id    = t.than_id
                  LEFT JOIN products p ON tx.product_id = p.product_id
@@ -282,7 +238,6 @@ router.get('/dashboard',
                  ORDER BY category, month`
             );
 
-            // Compute rolling 3-month average in JS
             const seasonalMovement = computeRolling(seasonalRaw);
 
             res.json({ summary, categoryMovement, deadStock, retailerSignals, supplierSignals, seasonalMovement });
@@ -292,26 +247,14 @@ router.get('/dashboard',
     }
 );
 
-/**
- * computeRolling(rows)
- *
- * Input:  [{ category, month: 'YYYY-MM', sold_meters }, ...]
- * Output: [{ category, month, sold_meters, rolling_avg_3m }, ...]
- *
- * rolling_avg_3m = mean of sold_meters for this month and the 2 preceding months
- * within the same category. If fewer than 3 data points exist, uses what's available.
- */
 function computeRolling(rows) {
-    // group by category
     const byCategory = {};
     for (const r of rows) {
         if (!byCategory[r.category]) byCategory[r.category] = [];
         byCategory[r.category].push({ month: r.month, sold_meters: Number(r.sold_meters) });
     }
-
     const result = [];
     for (const [category, months] of Object.entries(byCategory)) {
-        // months are already sorted ASC by the SQL query
         for (let i = 0; i < months.length; i++) {
             const window = months.slice(Math.max(0, i - 2), i + 1);
             const avg    = window.reduce((s, m) => s + m.sold_meters, 0) / window.length;
@@ -332,21 +275,13 @@ router.get('/inventory/search', async (req, res) => {
     const maxPrice = req.query.max_price ? Number(req.query.max_price) : null;
     const params   = [];
     const clauses  = ['t.remaining_stock > 0'];
-
     if (q) {
-        clauses.push(`(
-            t.than_code LIKE ? OR t.fabric_type LIKE ? OR t.color LIKE ?
-            OR t.design LIKE ? OR COALESCE(p.category, '') LIKE ?
-            OR t.warehouse_location LIKE ?
-        )`);
+        clauses.push(`(t.than_code LIKE ? OR t.fabric_type LIKE ? OR t.color LIKE ?
+            OR t.design LIKE ? OR COALESCE(p.category, '') LIKE ? OR t.warehouse_location LIKE ?)`);
         const like = `%${q}%`;
         params.push(like, like, like, like, like, like);
     }
-    if (maxPrice !== null && !isNaN(maxPrice)) {
-        clauses.push('t.selling_price <= ?');
-        params.push(maxPrice);
-    }
-
+    if (maxPrice !== null && !isNaN(maxPrice)) { clauses.push('t.selling_price <= ?'); params.push(maxPrice); }
     let conn;
     try {
         conn = await pool.getConnection();
@@ -361,13 +296,9 @@ router.get('/inventory/search', async (req, res) => {
              WHERE ${clauses.join(' AND ')}
              ORDER BY
                 CASE t.movement_speed
-                    WHEN 'fast'   THEN 0
-                    WHEN 'medium' THEN 1
-                    WHEN 'slow'   THEN 2
-                    WHEN 'new'    THEN 3
-                    WHEN 'dead'   THEN 4
-                END,
-                t.remaining_stock DESC
+                    WHEN 'fast' THEN 0 WHEN 'medium' THEN 1
+                    WHEN 'slow' THEN 2 WHEN 'new'    THEN 3 WHEN 'dead' THEN 4
+                END, t.remaining_stock DESC
              LIMIT 100`,
             params
         );
@@ -384,13 +315,6 @@ router.post('/admin/recalculate-speeds', checkPermission('MANAGE_PRODUCTS'), asy
     res.json({ success: true, updated });
 });
 
-/**
- * recalculateSpeeds()
- *
- * Phase 7: reads dead_stock_days from app_settings instead of using the
- * hardcoded DEAD_DAYS constant. Falls back to DEAD_DAYS if the table
- * doesn't exist yet.
- */
 export async function recalculateSpeeds() {
     const deadDays = await getDeadStockDays();
     let conn;
@@ -406,7 +330,6 @@ export async function recalculateSpeeds() {
              WHERE t.remaining_stock > 0
              GROUP BY t.than_id, t.remaining_stock, t.created_at`
         );
-
         let updated = 0;
         for (const row of thans) {
             const idle  = Number(row.idle_days  || 0);
@@ -424,6 +347,4 @@ export async function recalculateSpeeds() {
     } finally { if (conn) conn.release(); }
 }
 
-export { recalculateSpeeds as default };
-export { router as default };
 export default router;
