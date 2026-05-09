@@ -86,9 +86,10 @@ const agentLimiter = rateLimit({
     skip: (req) => req.user?.role === 'admin',
 });
 
+// Scoped only to /login and /signup — not the entire /api prefix
 const authLimiter = rateLimit({
     windowMs:    60 * 1000,
-    max:         parseInt(process.env.RATE_LIMIT_AUTH    || '10', 10),
+    max:         parseInt(process.env.RATE_LIMIT_AUTH    || '30', 10),
     standardHeaders: true,
     legacyHeaders:   false,
     message: { error: 'Too many login attempts — please wait 60 seconds.' },
@@ -97,7 +98,10 @@ const authLimiter = rateLimit({
 app.use(globalLimiter);
 
 // ─── MOUNT ROUTES ─────────────────────────────────────────────────────────────
-app.use('/api',              authLimiter, authRoutes);
+// authLimiter is now applied only to the two auth endpoints, not all of /api
+app.use('/api/login',        authLimiter);
+app.use('/api/signup',       authLimiter);
+app.use('/api',              authRoutes);
 app.use('/api/products',     productRoutes);
 app.use('/api/suppliers',    supplierRoutes);
 app.use('/api/bales',        baleRoutes);
