@@ -1,10 +1,16 @@
-import express from 'express';
-import cors from 'cors';
-import pool from './db.js';
-import { isReady } from './cache.js';
+// server.js — KT IMPEX backend bootstrap
+// Phase 4 fix: added rate limiting (express-rate-limit) and structured logging (pino).
+// All console.log / console.error replaced with logger calls.
+
+import express        from 'express';
+import cors           from 'cors';
+import rateLimit      from 'express-rate-limit';
+import pool           from './db.js';
+import { isReady }    from './cache.js';
 import { checkPermission } from './middleware/checkPermission.js';
-import { flush } from './cache.js';
+import { flush }      from './cache.js';
 import { recalculateSpeeds } from './routes/operations.js';
+import logger         from './logger.js';
 
 // ── Route modules ──────────────────────────────────────────────────────────────
 import authRoutes        from './routes/auth.js';
@@ -43,7 +49,6 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: (origin, callback) => {
-        // Allow requests with no origin (e.g. curl, Postman, server-to-server)
         if (!origin) return callback(null, true);
         if (allowedOrigins.includes(origin)) return callback(null, true);
         callback(new Error(`CORS: origin '${origin}' is not allowed. Add it to ALLOWED_ORIGIN env var.`));
@@ -54,29 +59,52 @@ app.use(cors({
 
 app.use(express.json());
 
+// ─── RATE LIMITING (Issue 3) ───────────────────────────────────────────────────
+// Global limiter: 200 requests per minute per IP.
+// Agent limiter:  20  requests per minute per IP (Gemini API cost protection).
+// Auth limiter:   10  requests per minute per IP (brute-force protection).
+//
+// All limits are configurable via env vars so Railway can tune without deploys.
+const globalLimiter = rateLimit({
+    windowMs:    60 * 1000,
+    max:         parseInt(process.env.RATE_LIMIT_GLOBAL  || '200', 10),
+    standardHeaders: true,
+    legacyHeaders:   false,
+    message: { error: 'Too many requests — please slow down.' },
+});
+
+const agentLimiter = rateLimit({
+    windowMs:    60 * 1000,
+    max:         parseInt(process.env.RATE_LIMIT_AGENTS  || '20', 10),
+    standardHeaders: true,
+    legacyHeaders:   false,
+    message: { error: 'Agent rate limit reached — wait 60 seconds before retrying.' },
+    skip: (req) => req.user?.role === 'admin', // admins bypass agent limit
+});
+
+const authLimiter = rateLimit({
+    windowMs:    60 * 1000,
+    max:         parseInt(process.env.RATE_LIMIT_AUTH    || '10', 10),
+    standardHeaders: true,
+    legacyHeaders:   false,
+    message: { error: 'Too many login attempts — please wait 60 seconds.' },
+});
+
+// Apply global limiter to all routes
+app.use(globalLimiter);
+
 // ─── MOUNT ROUTES ─────────────────────────────────────────────────────────────
-//
-// operationsRoutes has paths: /dashboard, /thans, /inventory/search, /admin/recalculate-speeds
-//
-// Frontend calls:
-//   GET /api/operations/dashboard   ← needs mount at /api/operations
-//   GET /api/thans                  ← needs mount at /api
-//   GET /api/inventory/search       ← needs mount at /api
-//   POST /api/admin/recalculate-speeds ← needs mount at /api
-//
-// Mount TWICE so all paths resolve correctly.
-//
-app.use('/api',              authRoutes);        // POST /api/signup, POST /api/login
-app.use('/api/products',     productRoutes);     // CRUD /api/products
-app.use('/api/suppliers',    supplierRoutes);    // GET  /api/suppliers
-app.use('/api/bales',        baleRoutes);        // CRUD /api/bales + /api/bales/:id/thans
-app.use('/api/operations',   operationsRoutes);  // GET  /api/operations/dashboard
-app.use('/api',              operationsRoutes);  // GET  /api/thans, /api/inventory/search, POST /api/admin/*
-app.use('/api/retailers',    retailerRoutes);    // CRUD /api/retailers
-app.use('/api/transactions',  salesRoutes);      // CRUD /api/transactions
-app.use('/api/agents',       agentRoutes);       // POST /api/agents/query, /api/agents/procurement
-app.use('/api/analytics',    analyticsRoutes);   // GET  /api/analytics/*
-app.use('/api/quotations',   quotationRoutes);   // CRUD /api/quotations
+app.use('/api',              authLimiter, authRoutes);    // POST /api/signup, /api/login, /api/forgot-password
+app.use('/api/products',     productRoutes);
+app.use('/api/suppliers',    supplierRoutes);
+app.use('/api/bales',        baleRoutes);
+app.use('/api/operations',   operationsRoutes);
+app.use('/api',              operationsRoutes);           // /api/thans, /api/inventory/search, /api/admin/*
+app.use('/api/retailers',    retailerRoutes);
+app.use('/api/transactions',  salesRoutes);
+app.use('/api/agents',       agentLimiter, agentRoutes); // strict limit — each call hits Gemini
+app.use('/api/analytics',    analyticsRoutes);
+app.use('/api/quotations',   quotationRoutes);
 
 // ─── HEALTH ───────────────────────────────────────────────────────────────────
 app.get('/api/health', async (req, res) => {
@@ -104,14 +132,13 @@ setInterval(async () => {
         const updated = await recalculateSpeeds();
         flush('thans:*').catch(() => {});
         flush('dashboard').catch(() => {});
-        console.log(`[cron] movement_speed recalculated — ${updated} thans updated`);
+        logger.info({ updated }, '[cron] movement_speed recalculated');
     } catch (err) {
-        console.error('[cron] recalculateSpeeds failed:', err.message);
+        logger.error({ err: err.message }, '[cron] recalculateSpeeds failed');
     }
 }, 24 * 60 * 60 * 1000);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
+    logger.info({ port: PORT, origins: allowedOrigins }, 'KT IMPEX API started');
 });

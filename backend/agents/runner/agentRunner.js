@@ -10,42 +10,36 @@
 //   via writeMemorySnapshot(). Using END_MEMORY prevents the greedy regex
 //   from truncating multi-paragraph memory updates.
 //
-// Issue 2 fix: spawnAgent() implemented — coordinator can now programmatically
-//   delegate to sub-agents at runtime. Exported for use in agents.js route.
+// Phase 3 fixes (committed in previous push):
+//   - Issue 2: spawnAgent() implemented and exported
+//   - Issue 3: provider abstraction (AGENT_PROVIDER=gemini|openai)
+//   - Issue 4: allowedAgentTypes parsed from frontmatter and enforced in spawnAgent()
 //
-// Issue 3 fix: provider abstraction layer.
-//   Set AGENT_PROVIDER=openai in .env to switch to OpenAI-compatible API.
-//   Defaults to 'gemini'. OPENAI_API_KEY + OPENAI_BASE_URL are used for OpenAI.
-//   All .agent.md model strings are passed through as-is to the chosen provider.
+// Phase 4 fix — Issue 1:
+//   import.meta.dirname is Node 20.11+ only. Replaced with fileURLToPath polyfill
+//   so the server runs correctly on Node 18+ (Railway's default LTS image).
 //
-// Issue 4 fix: allowedAgentTypes parsed from frontmatter and enforced in spawnAgent().
-//   Coordinator cannot spawn an agent not listed in its allowedAgentTypes.
+// Phase 4 fix — Issue 4:
+//   All console.log / console.error replaced with structured pino logger.
 
-import { readFile } from 'fs/promises'
-import { resolve }  from 'path'
+import { readFile }              from 'fs/promises'
+import { resolve, dirname }      from 'path'
+import { fileURLToPath }         from 'url'           // Issue 1 fix
 import { readMemory, writeMemorySnapshot } from './agentMemory.js'
+import logger                    from '../../logger.js'
 
-// ── Provider abstraction ─────────────────────────────────────────────────────
+// Issue 1 fix: replaces import.meta.dirname (Node 20.11+ only)
+// __filename and __dirname work on Node 18+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname  = dirname(__filename)
+
+// ── Provider abstraction (Phase 3 Issue 3) ────────────────────────────────────
 // Issue 3: switch provider via AGENT_PROVIDER env var ('gemini' or 'openai').
-// Both providers expose an identical async generateText(model, systemPrompt, query) interface.
-
 const AGENT_PROVIDER = (process.env.AGENT_PROVIDER || 'gemini').toLowerCase()
 
 let _geminiClient = null
 let _openaiClient = null
 
-function getGeminiClient() {
-    if (!_geminiClient) {
-        const { GoogleGenerativeAI } = await import('@google/generative-ai').catch(() => {
-            throw new Error('Missing dependency: @google/generative-ai. Run: npm install @google/generative-ai')
-        })
-        _geminiClient = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
-    }
-    return _geminiClient
-}
-
-// Issue 3: top-level await not available in CommonJS; use dynamic require pattern.
-// Provider clients are initialised lazily on first call.
 async function callGemini(modelName, systemPrompt, query) {
     if (!process.env.GEMINI_API_KEY)
         throw new Error('GEMINI_API_KEY not set. Add it to your .env file.')
@@ -70,7 +64,7 @@ async function callOpenAI(modelName, systemPrompt, query) {
         })
     }
     const resp = await _openaiClient.chat.completions.create({
-        model,
+        model:    modelName,
         messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user',   content: query },
@@ -79,23 +73,20 @@ async function callOpenAI(modelName, systemPrompt, query) {
     return resp.choices[0].message.content
 }
 
-/**
- * generateText — unified provider interface.
- * Routes to Gemini or OpenAI based on AGENT_PROVIDER env var.
- */
 async function generateText(modelName, systemPrompt, query) {
     if (AGENT_PROVIDER === 'openai') return callOpenAI(modelName, systemPrompt, query)
     return callGemini(modelName, systemPrompt, query)
 }
 
-// ── Agent definition loader ──────────────────────────────────────────────────
+// ── Agent definition loader ───────────────────────────────────────────────────
 
-const AGENTS_DIR = resolve(import.meta.dirname, '..')
+// Issue 1 fix: use __dirname (fileURLToPath-derived) instead of import.meta.dirname
+const AGENTS_DIR = resolve(__dirname, '..')
 
 /**
  * Load and parse an agent .md file.
  * Frontmatter is a YAML-like block at the top between --- markers.
- * Issue 4: also parses allowedAgentTypes (multi-line YAML list).
+ * Phase 3 Issue 4: also parses allowedAgentTypes (multi-line YAML list).
  * Returns { name, model, maxTurns, memoryScope, allowedAgentTypes, systemPrompt }
  */
 async function loadAgentDefinition(agentName) {
@@ -112,7 +103,6 @@ async function loadAgentDefinition(agentName) {
         let inAllowedAgentTypes = false
 
         for (const line of fmLines) {
-            // Issue 4: parse multi-line allowedAgentTypes YAML list
             if (line.trim() === 'allowedAgentTypes:') {
                 inAllowedAgentTypes = true
                 continue
@@ -126,13 +116,11 @@ async function loadAgentDefinition(agentName) {
                     inAllowedAgentTypes = false
                 }
             }
-
             const [key, ...rest] = line.split(':')
             if (key && rest.length && !inAllowedAgentTypes) {
                 meta[key.trim()] = rest.join(':').trim()
             }
         }
-
         systemPrompt = fmMatch[2].trim()
     }
 
@@ -141,12 +129,12 @@ async function loadAgentDefinition(agentName) {
         model:             meta.model       || process.env.AGENT_MODEL || 'gemini-2.0-flash',
         maxTurns:          parseInt(meta.maxTurns || '3', 10),
         memoryScope:       meta.memoryScope || meta['memory'] || 'project',
-        allowedAgentTypes, // Issue 4: passed through to spawnAgent guard
+        allowedAgentTypes,
         systemPrompt,
     }
 }
 
-// ── Response parsers ─────────────────────────────────────────────────────────
+// ── Response parsers ──────────────────────────────────────────────────────────
 
 function extractMemoryUpdate(responseText) {
     const match = responseText.match(/MEMORY_UPDATE:\s*([\s\S]*?)\s*END_MEMORY/)
@@ -175,10 +163,10 @@ function extractVerdict(responseText) {
     return null
 }
 
-// ── Core runner ──────────────────────────────────────────────────────────────
+// ── Core runner ───────────────────────────────────────────────────────────────
 
 /**
- * runAgent(agentName, query, context?, username?)
+ * runAgent({ agentName, query, context?, username? })
  *
  * Full lifecycle:
  * 1. Load agent definition (.agent.md frontmatter + system prompt)
@@ -191,8 +179,9 @@ function extractVerdict(responseText) {
  */
 export async function runAgent({ agentName, query, context = '', username = 'system' }) {
     const start = Date.now()
+    logger.debug({ agentName, username }, 'Agent run started')
 
-    const agent = await loadAgentDefinition(agentName)
+    const agent  = await loadAgentDefinition(agentName)
     const memory = await readMemory(agent.memoryScope, agentName, username)
 
     const fullSystemPrompt = [
@@ -201,26 +190,29 @@ export async function runAgent({ agentName, query, context = '', username = 'sys
         context ? `\n\n## Query Context\n${context}` : '',
     ].join('')
 
-    // Issue 3: use provider abstraction instead of direct Gemini call
     const rawResponse = await generateText(agent.model, fullSystemPrompt, query)
 
     const verdict = extractVerdict(rawResponse)
     const { memoryContent, cleanResponse } = extractMemoryUpdate(rawResponse)
     if (memoryContent) {
         await writeMemorySnapshot(agent.memoryScope, agentName, username, memoryContent)
+        logger.debug({ agentName, scope: agent.memoryScope }, 'Memory snapshot written')
     }
+
+    const durationMs = Date.now() - start
+    logger.info({ agentName, durationMs, model: agent.model, provider: AGENT_PROVIDER, verdict }, 'Agent run complete')
 
     return {
         agentName,
         verdict,
         fullResponse: cleanResponse,
-        durationMs:  Date.now() - start,
-        model:       agent.model,
-        provider:    AGENT_PROVIDER,
+        durationMs,
+        model:    agent.model,
+        provider: AGENT_PROVIDER,
     }
 }
 
-// ── Issue 2: spawnAgent ───────────────────────────────────────────────────────
+// ── spawnAgent (Phase 3 Issue 2) ──────────────────────────────────────────────
 
 /**
  * spawnAgent({ callerAgentName, targetAgentName, query, context, username })
@@ -229,37 +221,27 @@ export async function runAgent({ agentName, query, context = '', username = 'sys
  * that needs to delegate to a specialist at runtime.
  *
  * Guards:
- * - Issue 4: if the calling agent has an allowedAgentTypes list, targetAgentName
- *   must appear in it (matched case-insensitively against both raw name and
- *   the PascalCase "AgentName" pattern used in coordinator.agent.md).
- * - Anti-recursion: a fork child (_FORK_CHILD=true) cannot call spawnAgent.
- *
- * Returns the same structured result as runAgent.
+ * - Phase 3 Issue 4: allowedAgentTypes enforced if defined on caller
+ * - Anti-recursion: fork children (_FORK_CHILD=true) cannot call spawnAgent
  */
 export async function spawnAgent({
     callerAgentName,
     targetAgentName,
     query,
-    context = '',
+    context  = '',
     username = 'system',
 }) {
-    // Anti-recursion guard (same as forkRunner)
     if (process.env._FORK_CHILD === 'true') {
         throw new Error('Fork children cannot spawn further agents.')
     }
 
-    // Issue 4: enforce allowedAgentTypes if defined on caller
     if (callerAgentName) {
-        const caller = await loadAgentDefinition(callerAgentName)
+        const caller  = await loadAgentDefinition(callerAgentName)
         if (caller.allowedAgentTypes && caller.allowedAgentTypes.length > 0) {
-            // allowedAgentTypes in .md are PascalCase e.g. "InventoryAgent"
-            // targetAgentName in code is lowercase e.g. "inventory"
-            // normalise both to lowercase for comparison
-            const allowed = caller.allowedAgentTypes.map(a =>
-                a.toLowerCase().replace(/agent$/, '')
-            )
-            const target = targetAgentName.toLowerCase().replace(/agent$/, '')
+            const allowed = caller.allowedAgentTypes.map(a => a.toLowerCase().replace(/agent$/, ''))
+            const target  = targetAgentName.toLowerCase().replace(/agent$/, '')
             if (!allowed.includes(target)) {
+                logger.warn({ callerAgentName, targetAgentName, allowed }, 'spawnAgent blocked by allowedAgentTypes')
                 throw new Error(
                     `Agent '${callerAgentName}' is not permitted to spawn '${targetAgentName}'. ` +
                     `Allowed: ${caller.allowedAgentTypes.join(', ')}`
@@ -268,5 +250,6 @@ export async function spawnAgent({
         }
     }
 
+    logger.info({ callerAgentName, targetAgentName }, 'spawnAgent delegating')
     return runAgent({ agentName: targetAgentName, query, context, username })
 }
