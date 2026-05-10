@@ -176,8 +176,9 @@ export const transactionTools = [
   },
 
   {
-    name: 'get_sales_summary',
-    description: 'Get aggregated sales stats: total revenue, total margin, top selling thans. Use when user asks for sales report, total sales, or revenue summary.',
+    // Renamed from get_sales_summary → get_transaction_summary to avoid clash with salesTools.js
+    name: 'get_transaction_summary',
+    description: 'Get aggregated transaction stats by than: total revenue, margin, top selling thans over N days. Use when user asks for than-level sales breakdown, stock movement revenue, or top thans by meters sold.',
     parameters: { type: 'object', properties: {
       days: { type: 'number', description: 'Look-back window in days. Default 30.' }
     }, required: [] },
