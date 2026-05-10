@@ -9,6 +9,10 @@ export const USER_TABS = [
     'Register Dealer',
     'Create Quotation',
     'My Quotations',
+    'Receivables Ageing',
+    'Pending Orders',
+    'Ageing Stock',
+    'Dispatch Status',
 ]
 
 export const ADMIN_TABS = [

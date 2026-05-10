@@ -13,6 +13,10 @@ import DeadStockAnalytics   from './components/DeadStockAnalytics'
 import AgentChat            from './components/AgentChat'
 import AnalyticsDashboard   from './components/AnalyticsDashboard'
 import DealerDashboard      from './components/DealerDashboard'
+import DealerReceivables    from './components/DealerReceivables'
+import DealerPendingOrders  from './components/DealerPendingOrders'
+import DealerAgeingStock    from './components/DealerAgeingStock'
+import DealerDispatches     from './components/DealerDispatches'
 import Header               from './components/Header'
 import Footer               from './components/Footer'
 import { USER_TABS, ADMIN_TABS } from './constants/tabs'
@@ -97,9 +101,7 @@ function App() {
     if (!user) return <LoginPage onLogin={handleLogin} />
 
     const isAdmin = user.role === 'admin'
-    const tabs    = isAdmin ? ADMIN_TABS : USER_TABS
 
-    // ── Session-expired banner (shared) ───────────────────────────────────────
     const sessionBanner = sessionExpired && (
         <div style={{
             position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
@@ -116,7 +118,7 @@ function App() {
         </div>
     )
 
-    // ── Admin layout (completely unchanged) ──────────────────────────────────
+    // ── Admin layout (completely unchanged) ───────────────────────────────────
     if (isAdmin) return (
         <div className="app">
             {sessionBanner}
@@ -162,7 +164,7 @@ function App() {
         </div>
     )
 
-    // ── Dealer layout (new themed UI) ─────────────────────────────────────────
+    // ── Dealer layout ────────────────────────────────────────────────────────────────
     return (
         <div className="dealer-page">
             {sessionBanner}
@@ -178,10 +180,14 @@ function App() {
             </nav>
             <main className="kt-content">
                 <TabErrorBoundary tabKey={activeTab}>
-                    {activeTab === 0 && <DealerDashboard   user={user} />}
-                    {activeTab === 1 && <CustomerForm      user={user} />}
-                    {activeTab === 2 && <QuotationForm     user={user} />}
-                    {activeTab === 3 && <QuotationHistory  user={user} />}
+                    {activeTab === 0 && <DealerDashboard     user={user} />}
+                    {activeTab === 1 && <CustomerForm        user={user} />}
+                    {activeTab === 2 && <QuotationForm       user={user} />}
+                    {activeTab === 3 && <QuotationHistory    user={user} />}
+                    {activeTab === 4 && <DealerReceivables   user={user} />}
+                    {activeTab === 5 && <DealerPendingOrders user={user} />}
+                    {activeTab === 6 && <DealerAgeingStock   user={user} />}
+                    {activeTab === 7 && <DealerDispatches    user={user} />}
                 </TabErrorBoundary>
             </main>
             <Footer />
