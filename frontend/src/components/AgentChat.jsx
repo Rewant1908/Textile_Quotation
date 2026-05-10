@@ -37,29 +37,22 @@ function getBaseUrl() {
   return import.meta.env.VITE_API_URL || 'http://localhost:5000'
 }
 
-// Strip all internal scaffolding from the final message before rendering
 function cleanResponse(text) {
   if (!text) return ''
   return text
-    // VERDICT lines
     .replace(/^(VERDICT|RETAILER SIGNAL|PROCUREMENT VERDICT|PRICING VERDICT|RETRIEVAL|WAREHOUSE VERDICT|SALES SIGNAL)[^\n]*/gm, '')
-    // Confidence markers (inline and standalone)
     .replace(/\|?\s*Confidence:\s*(HIGH|MEDIUM|LOW)\s*/gi, '')
     .replace(/^Confidence:\s*(HIGH|MEDIUM|LOW).*$/gm, '')
-    // Invoking / agent output headers
     .replace(/^Invoking:\s*.+$/gm, '')
     .replace(/^To \w+Agent?:\s*/gm, '')
     .replace(/^\w+(?:Agent|Manager)?\s+Output:\s*/gm, '')
-    // JSON code blocks (internal tool scaffolding)
     .replace(/```json[\s\S]*?```/g, '')
-    // Collapse extra blank lines
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
 
 function renderMarkdown(text) {
   if (!text) return ''
-  // Tables
   text = text.replace(
     /\|(.+)\|\n\|[-| :]+\|\n((\|.+\|\n?)+)/g,
     (_, header, rows) => {
@@ -84,9 +77,61 @@ function renderMarkdown(text) {
   return `<p>${text}</p>`
 }
 
-// ── Step bubble — only shows human-readable status, no raw JSON ────────────────
+// ── Rotating starter prompts — one visible at a time, cycles every 3s ─────────
+function RotatingStarters({ starters, onSelect }) {
+  const [activeIdx, setActiveIdx] = useState(0)
+  const [visible,   setVisible]   = useState(true)
+
+  useEffect(() => {
+    if (!starters.length) return
+    setActiveIdx(0)
+    setVisible(true)
+  }, [starters])
+
+  useEffect(() => {
+    if (starters.length <= 1) return
+    const timer = setInterval(() => {
+      // fade out
+      setVisible(false)
+      setTimeout(() => {
+        setActiveIdx(i => (i + 1) % starters.length)
+        setVisible(true)
+      }, 350) // matches CSS transition
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [starters])
+
+  if (!starters.length) return null
+
+  return (
+    <div className="ac-rotating-wrap">
+      <p className="ac-rotating-hint">Try asking…</p>
+      <div className="ac-rotating-stage">
+        <button
+          className={`ac-rotating-prompt ${visible ? 'ac-rotating-prompt--in' : 'ac-rotating-prompt--out'}`}
+          onClick={() => onSelect(starters[activeIdx])}
+        >
+          <span className="ac-rotating-arrow">↗</span>
+          {starters[activeIdx]}
+        </button>
+      </div>
+      {/* Dot indicators */}
+      <div className="ac-rotating-dots">
+        {starters.map((_, i) => (
+          <button
+            key={i}
+            className={`ac-dot ${i === activeIdx ? 'ac-dot--active' : ''}`}
+            onClick={() => { setVisible(false); setTimeout(() => { setActiveIdx(i); setVisible(true) }, 200) }}
+            aria-label={`Prompt ${i + 1}`}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Step bubble ───────────────────────────────────────────────────────────────
 function StepBubble({ step }) {
-  // tool_result is intentionally hidden — too noisy for end users
   if (step.type === 'tool_result') return null
 
   const labels = {
@@ -108,7 +153,7 @@ function StepBubble({ step }) {
   }
 
   const labelFn = labels[step.type]
-  if (!labelFn) return null  // hide unknown step types
+  if (!labelFn) return null
 
   return (
     <div className={`ac-step ac-step--${step.type}`}>
@@ -118,23 +163,22 @@ function StepBubble({ step }) {
   )
 }
 
-// ── Collapsible steps panel ───────────────────────────────────────────────────────
+// ── Collapsible steps panel ───────────────────────────────────────────────────
 function StepsPanel({ steps, done }) {
   const [open, setOpen] = useState(false)
 
-  // Only show visible steps (tool_result filtered out inside StepBubble)
   const visibleSteps = steps.filter(s =>
     s.type !== 'tool_result' && s.type !== 'coordinator_start'
   )
 
   if (visibleSteps.length === 0 && done) return null
 
-  // While loading: show latest step inline (no toggle needed)
   if (!done) {
-    const latest = [...steps].reverse().find(s => s.type === 'thinking' || s.type === 'tool_call' || s.type === 'coordinator_start')
+    const latest = [...steps].reverse().find(s =>
+      s.type === 'thinking' || s.type === 'tool_call' || s.type === 'coordinator_start'
+    )
     return (
       <div className="ac-steps-inline">
-        <span className="ac-step-icon">{'  '}</span>
         <span className="ac-step-label ac-step-label--muted">
           {latest?.type === 'coordinator_start' ? 'Coordinator agent started' :
            latest?.type === 'tool_call'         ? `Checking ${latest.tool?.replace(/_/g,' ')}…` :
@@ -161,7 +205,7 @@ function StepsPanel({ steps, done }) {
   )
 }
 
-// ── Main component ───────────────────────────────────────────────────────────────
+// ── Main component ────────────────────────────────────────────────────────────
 export default function AgentChat({ user }) {
   const [agent,     setAgent]     = useState('coordinator')
   const [messages,  setMessages]  = useState([])
@@ -324,14 +368,8 @@ export default function AgentChat({ user }) {
             <div className="ac-empty">
               <span className="ac-empty-emoji">{selectedAgent?.emoji}</span>
               <p>Ask the <strong>{selectedAgent?.label}</strong> agent anything — it can read data <em>and</em> take actions.</p>
+              <RotatingStarters starters={starters} onSelect={sendMessage} />
               <p className="ac-empty-hint">Enter to send · Shift+Enter for new line</p>
-              {starters.length > 0 && (
-                <div className="ac-starters">
-                  {starters.map((s, i) => (
-                    <button key={i} className="ac-starter-btn" onClick={() => sendMessage(s)}>{s}</button>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
@@ -344,8 +382,6 @@ export default function AgentChat({ user }) {
 
               {msg.role === 'assistant' && (
                 <div className="ac-bubble ac-bubble--assistant">
-
-                  {/* Steps: inline spinner while loading, collapsible after done */}
                   <StepsPanel steps={msg.steps || []} done={msg.done} />
 
                   {!msg.done && (
@@ -402,7 +438,96 @@ export default function AgentChat({ user }) {
       </div>
 
       <style>{`
-        /* Loading inline status */
+        /* ── Rotating prompts ─────────────────────────────────────── */
+        .ac-rotating-wrap {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 12px;
+          margin: 16px 0 8px;
+        }
+        .ac-rotating-hint {
+          font-size: 12px;
+          color: var(--color-text-muted, #888);
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          margin: 0;
+        }
+        .ac-rotating-stage {
+          min-height: 48px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
+          max-width: 520px;
+        }
+        .ac-rotating-prompt {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 11px 20px;
+          background: var(--color-surface, #fff);
+          border: 1.5px solid var(--color-border, #ddd);
+          border-radius: 24px;
+          font-size: 14px;
+          color: var(--color-text, #222);
+          cursor: pointer;
+          transition:
+            opacity 0.35s ease,
+            transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+            background 0.18s ease,
+            border-color 0.18s ease,
+            box-shadow 0.18s ease;
+          text-align: left;
+          max-width: 100%;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .ac-rotating-prompt--in {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+        .ac-rotating-prompt--out {
+          opacity: 0;
+          transform: translateY(8px) scale(0.97);
+          pointer-events: none;
+        }
+        .ac-rotating-prompt:hover {
+          background: var(--color-primary-highlight, #cedcd8);
+          border-color: var(--color-primary, #01696f);
+          box-shadow: 0 4px 16px rgba(1,105,111,0.13);
+          color: var(--color-primary-active, #0f3638);
+        }
+        .ac-rotating-arrow {
+          font-size: 15px;
+          opacity: 0.5;
+          flex-shrink: 0;
+        }
+
+        /* Dot indicators */
+        .ac-rotating-dots {
+          display: flex;
+          gap: 6px;
+          align-items: center;
+        }
+        .ac-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: var(--color-border, #ccc);
+          border: none;
+          padding: 0;
+          cursor: pointer;
+          transition: background 0.2s ease, transform 0.2s ease;
+        }
+        .ac-dot--active {
+          background: var(--color-primary, #01696f);
+          transform: scale(1.35);
+        }
+        .ac-dot:hover:not(.ac-dot--active) {
+          background: var(--color-text-muted, #888);
+        }
+
+        /* ── Steps ────────────────────────────────────────────────── */
         .ac-steps-inline {
           display: flex;
           align-items: center;
@@ -414,7 +539,6 @@ export default function AgentChat({ user }) {
         }
         .ac-step-label--muted { font-style: italic; }
 
-        /* Collapsible steps toggle */
         .ac-steps-wrap { margin-bottom: 10px; }
         .ac-steps-toggle {
           display: flex;
@@ -430,7 +554,6 @@ export default function AgentChat({ user }) {
         }
         .ac-steps-toggle:hover { color: var(--color-primary, #01696f); }
 
-        /* Steps list */
         .ac-steps {
           display: flex;
           flex-direction: column;
@@ -454,7 +577,7 @@ export default function AgentChat({ user }) {
         .ac-step-icon  { flex-shrink: 0; }
         .ac-step-label { word-break: break-word; }
 
-        /* Thinking dots */
+        /* ── Thinking dots ─────────────────────────────────────────── */
         .ac-thinking { display: flex; gap: 4px; padding: 6px 2px; }
         .ac-thinking span {
           width: 7px; height: 7px;
