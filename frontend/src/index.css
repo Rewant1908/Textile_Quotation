@@ -1,59 +1,70 @@
-/* theme.css is imported from App.jsx — no import needed here */
+/*
+ * index.css — KT Impex global base
+ * Uses the same KT design tokens as theme.css so user-facing pages
+ * match the admin/dealer UI in bg, colour, and font.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  /* ── Mirror the KT brand tokens ────────────────────────────── */
+  --kt-primary:        #1a3a5c;
+  --kt-primary-hover:  #14304d;
+  --kt-accent:         #e67e22;
+  --kt-accent-hover:   #d35400;
+  --kt-success:        #27ae60;
+  --kt-danger:         #c0392b;
+  --kt-warning:        #f39c12;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  --kt-bg:             #f0f4f8;
+  --kt-surface:        #ffffff;
+  --kt-surface-2:      #f7f9fc;
+  --kt-border:         #dde3ea;
 
-  font: 18px/145% var(--sans);
+  --kt-text:           #1a2332;
+  --kt-text-muted:     #5a6a7e;
+  --kt-text-faint:     #9aaabb;
+
+  --kt-glass-bg:       rgba(255,255,255,0.75);
+  --kt-glass-border:   rgba(255,255,255,0.9);
+  --kt-glass-shadow:   0 4px 24px rgba(26,58,92,0.10);
+
+  --kt-radius-sm:      6px;
+  --kt-radius-md:      10px;
+  --kt-radius-lg:      16px;
+  --kt-transition:     180ms cubic-bezier(0.16,1,0.3,1);
+
+  /* ── Legacy aliases (kept so any old var() refs still resolve) ── */
+  --text:        var(--kt-text-muted);
+  --text-h:      var(--kt-text);
+  --bg:          var(--kt-bg);
+  --border:      var(--kt-border);
+  --accent:      var(--kt-accent);
+  --accent-bg:   rgba(230,126,34,0.10);
+  --accent-border: rgba(230,126,34,0.45);
+  --shadow:      var(--kt-glass-shadow);
+  --sans:        'Inter', 'Segoe UI', system-ui, sans-serif;
+  --heading:     'Inter', 'Segoe UI', system-ui, sans-serif;
+  --mono:        ui-monospace, Consolas, monospace;
+
+  font: 16px/1.55 var(--sans);
   letter-spacing: 0;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
+  color-scheme: light;
+  color: var(--kt-text);
+  background: var(--kt-bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
-}
+*, *::before, *::after { box-sizing: border-box; }
 
 body {
   margin: 0;
+  background: var(--kt-bg);
+  color: var(--kt-text);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
 }
 
 #root {
@@ -68,46 +79,57 @@ body {
   box-sizing: border-box;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-weight: 700;
+  color: var(--kt-text);
   margin: 0;
+  line-height: 1.2;
 }
 
-code,
-.counter {
+h1 { font-size: clamp(28px, 5vw, 40px); letter-spacing: -0.5px; }
+h2 { font-size: clamp(20px, 3vw, 26px); letter-spacing: -0.2px; }
+h3 { font-size: 18px; }
+
+p { margin: 0; color: var(--kt-text-muted); }
+
+a {
+  color: var(--kt-primary);
+  text-decoration: none;
+  transition: color var(--kt-transition);
+}
+a:hover { color: var(--kt-primary-hover); text-decoration: underline; }
+
+code, .counter {
   font-family: var(--mono);
   display: inline-flex;
   border-radius: 4px;
-  color: var(--text-h);
+  color: var(--kt-text);
+}
+code {
+  font-size: 13px;
+  line-height: 135%;
+  padding: 3px 7px;
+  background: var(--kt-surface-2);
+  border: 1px solid var(--kt-border);
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+/* Scrollbar styling to match the KT palette */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--kt-bg); }
+::-webkit-scrollbar-thumb { background: var(--kt-border); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--kt-text-faint); }
+
+/* Focus ring consistent with admin side */
+:focus-visible {
+  outline: 2px solid var(--kt-primary);
+  outline-offset: 2px;
+  border-radius: var(--kt-radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
