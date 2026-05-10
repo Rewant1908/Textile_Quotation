@@ -4,16 +4,19 @@
 // Responsibilities:
 //   parseIntent(text)                    — regex NL→intent classifier
 //   queryInventory(intent, db)           — DB search using existing thans query pattern
-//   confidenceCheck(results)             — threshold gate
+//   confidenceCheck(results, intent)     — threshold gate
 //   formatReply(results, intent)         — WhatsApp-safe text (no markdown)
 //   sendWhatsAppMessage(to, msg)         — Meta Graph API send text message
-//   sendQuotationNotification(to, data)  — send quotation template notification
-//   fetchMetaMedia(mediaId)              — resolve media_id → download buffer
-//   fallbackToSalesperson(to)            — human handoff
+//   sendQuotationNotification(to)        — send template notification
+//   fetchMetaMediaUrl(mediaId)           — resolve media_id → download URL
+//   fallbackToSalesperson(to, msg)       — human handoff
 //   agentFallback(text, db)              — LLM escalation for ambiguous queries
+//
+// Template strategy:
+//   NODE_ENV=development → 'hello_world' (en_US) — works with Meta test number
+//   NODE_ENV=production  → 'quotations'  (en)    — works with real registered number
 
 import { createHmac }   from 'crypto'
-import https            from 'https'
 import { runAgent }     from '../agents/runner/agentRunner.js'
 import logger           from '../logger.js'
 
@@ -21,92 +24,69 @@ import logger           from '../logger.js'
 const META_API_VERSION = 'v25.0'
 const META_API_BASE    = `https://graph.facebook.com/${META_API_VERSION}`
 
+const IS_PROD = process.env.NODE_ENV === 'production'
+
+// Template config — switch automatically based on environment
+const TEMPLATE_NAME = IS_PROD ? 'quotations'  : 'hello_world'
+const TEMPLATE_LANG = IS_PROD ? 'en'          : 'en_US'
+
 // ── Signature verification ────────────────────────────────────────────────────
 /**
- * verifyMetaSignature(rawBody, signature)
+ * verifyMetaSignature(rawBody, signatureHeader)
  * Verifies X-Hub-Signature-256 header from Meta.
  * rawBody must be the raw Buffer (before JSON.parse).
  */
 export function verifyMetaSignature(rawBody, signatureHeader) {
     if (!signatureHeader?.startsWith('sha256=')) return false
-    const secret   = process.env.WHATSAPP_APP_SECRET
+    const secret = process.env.WHATSAPP_APP_SECRET
     if (!secret) return false
     const expected = 'sha256=' + createHmac('sha256', secret)
         .update(rawBody)
         .digest('hex')
-    // Timing-safe compare
     const a = Buffer.from(expected)
     const b = Buffer.from(signatureHeader)
     if (a.length !== b.length) return false
-    return !!(require_timingSafeEqual(a, b))
-}
-
-function require_timingSafeEqual(a, b) {
-    try {
-        const { timingSafeEqual } = await_crypto()
-        return timingSafeEqual(a, b)
-    } catch { return false }
-}
-
-// Synchronous-safe wrapper (timingSafeEqual is sync)
-function await_crypto() {
-    return { timingSafeEqual: (a, b) => {
-        let diff = 0
-        for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i]
-        return diff === 0
-    }}
+    let diff = 0
+    for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i]
+    return diff === 0
 }
 
 // ── Intent classifier ────────────────────────────────────────────────────────
 /**
  * parseIntent(text)
- *
  * Fast regex classifier — no LLM needed for 90% of queries.
  * Returns { intent, q, fabric, color, design, max_price, than_code, raw }
  *
- * Intents:
- *   search        — general inventory search
- *   stock_check   — how many meters / availability
- *   price_check   — what is the price
- *   image_request — send me image / photo of [than_code]
- *   help          — hi / hello / help
- *   unknown       — fallback to agent
+ * Intents: search | stock_check | price_check | image_request | help | unknown
  */
 export function parseIntent(text) {
     const t = text.trim().toLowerCase()
 
-    // Help / greeting
     if (/^(hi|hello|hey|help|namaste|namaskar|hola)(\s|$|!)/i.test(t)) {
         return { intent: 'help', raw: text }
     }
 
-    // Image request — "send image of T-112", "photo of THN-005", "pic T112"
     const imgMatch = t.match(
-        /(?:send\s+)?(?:image|photo|pic|picture|photo)\s+(?:of\s+)?([a-z0-9][a-z0-9\-_]{1,20})/i
+        /(?:send\s+)?(?:image|photo|pic|picture)\s+(?:of\s+)?([a-z0-9][a-z0-9\-_]{1,20})/i
     )
     if (imgMatch) {
         return { intent: 'image_request', than_code: imgMatch[1].toUpperCase(), raw: text }
     }
 
-    // Price check — "price of silk", "rate for cotton", "how much is polyester"
     const priceMatch = t.match(
         /(?:price|rate|cost|how\s+much)\s+(?:of\s+|for\s+|is\s+)?([\w\s]{2,30}?)(?:\s+per\s+meter)?[?]?$/i
     )
     if (priceMatch && /price|rate|cost|how much/.test(t)) {
-        const q = priceMatch[1].trim()
-        return { intent: 'price_check', q, raw: text }
+        return { intent: 'price_check', q: priceMatch[1].trim(), raw: text }
     }
 
-    // Stock check — "how many meters of cotton", "do you have red cotton"
     const stockMatch = t.match(
         /(?:how\s+many|stock|available|do\s+you\s+have|quantity|meters?\s+of)\s+(?:of\s+)?([\w\s]{2,30})/i
     )
     if (stockMatch) {
-        const q = stockMatch[1].trim()
-        return { intent: 'stock_check', q, raw: text }
+        return { intent: 'stock_check', q: stockMatch[1].trim(), raw: text }
     }
 
-    // Max price filter — "cotton under 150", "silk below 200 per meter"
     const maxPriceMatch = t.match(
         /([\w\s]{2,30})\s+(?:under|below|less\s+than|max|upto|up\s+to)\s+(\d+)/i
     )
@@ -119,9 +99,8 @@ export function parseIntent(text) {
         }
     }
 
-    // Color + fabric — "red cotton", "blue polyester", "green silk"
-    const COLORS   = ['red','blue','green','white','black','yellow','pink','purple','orange','grey','gray','brown','beige','cream','navy','maroon']
-    const FABRICS  = ['cotton','silk','polyester','linen','wool','denim','rayon','nylon','georgette','chiffon','satin','velvet','viscose']
+    const COLORS  = ['red','blue','green','white','black','yellow','pink','purple','orange','grey','gray','brown','beige','cream','navy','maroon']
+    const FABRICS = ['cotton','silk','polyester','linen','wool','denim','rayon','nylon','georgette','chiffon','satin','velvet','viscose']
     const colorHit  = COLORS.find(c  => t.includes(c))
     const fabricHit = FABRICS.find(f => t.includes(f))
 
@@ -135,7 +114,6 @@ export function parseIntent(text) {
         }
     }
 
-    // Generic search — anything else
     if (t.length >= 3) {
         return { intent: 'search', q: text.trim(), raw: text }
     }
@@ -143,11 +121,10 @@ export function parseIntent(text) {
     return { intent: 'unknown', raw: text }
 }
 
-// ── Inventory query ──────────────────────────────────────────────────────────
+// ── Inventory query ───────────────────────────────────────────────────────────
 /**
  * queryInventory(intent, db)
  * Runs the same query as GET /api/inventory/search against the DB pool directly.
- * Returns array of than rows.
  */
 export async function queryInventory(intent, db) {
     const { q, max_price, color, fabric } = intent
@@ -158,8 +135,8 @@ export async function queryInventory(intent, db) {
 
     if (searchTerm) {
         clauses.push(`(
-            t.than_code      LIKE ? OR t.fabric_type LIKE ? OR t.color LIKE ?
-            OR t.design      LIKE ? OR COALESCE(p.category, '') LIKE ?
+            t.than_code LIKE ? OR t.fabric_type LIKE ? OR t.color LIKE ?
+            OR t.design LIKE ? OR COALESCE(p.category, '') LIKE ?
             OR t.warehouse_location LIKE ?
         )`)
         const like = `%${searchTerm}%`
@@ -199,28 +176,16 @@ export async function queryInventory(intent, db) {
     }
 }
 
-// ── Confidence check ─────────────────────────────────────────────────────────
-/**
- * confidenceCheck(results, intent)
- * Returns { confident: boolean, reason: string }
- */
+// ── Confidence check ──────────────────────────────────────────────────────────
 export function confidenceCheck(results, intent) {
-    if (intent.intent === 'unknown') {
-        return { confident: false, reason: 'unknown_intent' }
-    }
-    if (intent.intent === 'help') {
-        return { confident: true, reason: 'help' }
-    }
-    if (!results || results.length === 0) {
-        return { confident: false, reason: 'no_results' }
-    }
-    if (intent.q && intent.q.length < 2) {
-        return { confident: false, reason: 'query_too_short' }
-    }
+    if (intent.intent === 'unknown') return { confident: false, reason: 'unknown_intent' }
+    if (intent.intent === 'help')    return { confident: true,  reason: 'help' }
+    if (!results || results.length === 0) return { confident: false, reason: 'no_results' }
+    if (intent.q && intent.q.length < 2)  return { confident: false, reason: 'query_too_short' }
     return { confident: true, reason: 'ok' }
 }
 
-// ── Reply formatter ──────────────────────────────────────────────────────────
+// ── Reply formatter ───────────────────────────────────────────────────────────
 /**
  * formatReply(results, intent)
  * WhatsApp-safe text — no markdown, max ~1500 chars, emoji bullets.
@@ -245,7 +210,7 @@ export function formatReply(results, intent) {
         return 'Sorry, we do not have that item in stock right now. Our salesperson will contact you shortly.'
     }
 
-    const top = results.slice(0, 5)
+    const top   = results.slice(0, 5)
     const lines = []
 
     if (intent.intent === 'price_check') {
@@ -279,7 +244,6 @@ export function formatReply(results, intent) {
 
     lines.push('')
     lines.push('To order or enquire, reply with the than code.')
-
     return lines.join('\n')
 }
 
@@ -287,7 +251,7 @@ export function formatReply(results, intent) {
 /**
  * sendWhatsAppMessage(to, text)
  * Sends a plain text message via Meta Cloud API.
- * to: phone number with country code, no +, e.g. '9779845058710'
+ * to: phone number with country code, no +
  */
 export async function sendWhatsAppMessage(to, text) {
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
@@ -296,22 +260,19 @@ export async function sendWhatsAppMessage(to, text) {
         throw new Error('WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN must be set')
     }
 
-    const body = JSON.stringify({
-        messaging_product: 'whatsapp',
-        recipient_type:    'individual',
-        to,
-        type:              'text',
-        text:              { body: text },
-    })
-
-    const url = `${META_API_BASE}/${phoneNumberId}/messages`
-    const res = await fetch(url, {
+    const res = await fetch(`${META_API_BASE}/${phoneNumberId}/messages`, {
         method:  'POST',
         headers: {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type':  'application/json',
         },
-        body,
+        body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            recipient_type:    'individual',
+            to,
+            type: 'text',
+            text: { body: text },
+        }),
     })
 
     if (!res.ok) {
@@ -321,19 +282,14 @@ export async function sendWhatsAppMessage(to, text) {
     return res.json()
 }
 
-// ── Meta Graph API — send quotation template notification ────────────────────
+// ── Meta Graph API — send quotation template notification ─────────────────────
 /**
  * sendQuotationNotification(to)
- * Sends the approved 'quotations' template message to a customer.
- * to: phone number with country code, no +, e.g. '9779845058710'
+ * Sends the appropriate template based on NODE_ENV:
+ *   development → 'hello_world' (en_US) — Meta test number only
+ *   production  → 'quotations'  (en)    — real registered number
  *
- * Template name: quotations (approved in Meta WhatsApp Manager)
- * Template content: "Hello, we are from KT-IMPEX a textile operating system
- *                    which enables communication between dealers and factories."
- *
- * Usage:
- *   import { sendQuotationNotification } from './services/whatsappService.js'
- *   await sendQuotationNotification('9779845058710')
+ * to: phone number with country code, no +
  */
 export async function sendQuotationNotification(to) {
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
@@ -342,25 +298,25 @@ export async function sendQuotationNotification(to) {
         throw new Error('WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN must be set')
     }
 
-    const body = JSON.stringify({
-        messaging_product: 'whatsapp',
-        recipient_type:    'individual',
-        to,
-        type:     'template',
-        template: {
-            name:     'quotations',
-            language: { code: 'en_US' },
-        },
-    })
+    logger.info({ to, template: TEMPLATE_NAME, env: process.env.NODE_ENV },
+        '[whatsapp] sending template notification')
 
-    const url = `${META_API_BASE}/${phoneNumberId}/messages`
-    const res = await fetch(url, {
+    const res = await fetch(`${META_API_BASE}/${phoneNumberId}/messages`, {
         method:  'POST',
         headers: {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type':  'application/json',
         },
-        body,
+        body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            recipient_type:    'individual',
+            to,
+            type:     'template',
+            template: {
+                name:     TEMPLATE_NAME,
+                language: { code: TEMPLATE_LANG },
+            },
+        }),
     })
 
     if (!res.ok) {
@@ -370,15 +326,15 @@ export async function sendQuotationNotification(to) {
     }
 
     const data = await res.json()
-    logger.info({ to, messageId: data?.messages?.[0]?.id }, '[whatsapp] quotation notification sent')
+    logger.info({ to, messageId: data?.messages?.[0]?.id, template: TEMPLATE_NAME },
+        '[whatsapp] template notification sent')
     return { success: true, data }
 }
 
-// ── Meta Graph API — fetch media ─────────────────────────────────────────────
+// ── Meta Graph API — fetch media URL ─────────────────────────────────────────
 /**
  * fetchMetaMediaUrl(mediaId)
- * Resolves a media_id to a download URL.
- * Returns the URL string.
+ * Resolves a media_id to a signed download URL (valid ~5 minutes).
  */
 export async function fetchMetaMediaUrl(mediaId) {
     const accessToken = process.env.WHATSAPP_ACCESS_TOKEN
@@ -389,24 +345,22 @@ export async function fetchMetaMediaUrl(mediaId) {
     })
     if (!res.ok) throw new Error(`Meta media lookup failed: ${res.status}`)
     const data = await res.json()
-    return data.url  // Signed URL, valid for ~5 minutes
+    return data.url
 }
 
 // ── Fallback to human salesperson ────────────────────────────────────────────
 /**
  * fallbackToSalesperson(to, originalMessage)
- * Sends a handoff message to the customer AND pings the notify number.
+ * Tells the customer a human will follow up, and pings the notify number.
  */
 export async function fallbackToSalesperson(to, originalMessage) {
     const notifyNumber = process.env.WHATSAPP_NOTIFY_NUMBER
 
-    // Tell customer
     await sendWhatsAppMessage(to,
         'Sorry, I could not find a confident answer for that. ' +
         'Our sales team will get back to you shortly! 🙏'
     ).catch(err => logger.error({ err }, '[whatsapp] fallback customer message failed'))
 
-    // Ping salesperson if configured
     if (notifyNumber && notifyNumber !== to) {
         const alert = `New WhatsApp enquiry from +${to}:\n"${originalMessage}"\n\nPlease follow up.`
         await sendWhatsAppMessage(notifyNumber, alert)
@@ -414,11 +368,10 @@ export async function fallbackToSalesperson(to, originalMessage) {
     }
 }
 
-// ── Agent fallback for ambiguous queries ─────────────────────────────────────
+// ── Agent fallback for ambiguous queries ──────────────────────────────────────
 /**
  * agentFallback(text, db)
- * Escalates to the inventory agent when the regex classifier returns 'unknown'.
- * Returns the agent's text response.
+ * Escalates to the inventory agent when regex classifier returns 'unknown'.
  */
 export async function agentFallback(text, db) {
     try {
