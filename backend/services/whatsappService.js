@@ -2,14 +2,15 @@
 // Phase 8: WhatsApp AI System
 //
 // Responsibilities:
-//   parseIntent(text)            — regex NL→intent classifier
-//   queryInventory(intent, db)   — DB search using existing thans query pattern
-//   confidenceCheck(results)     — threshold gate
-//   formatReply(results, intent) — WhatsApp-safe text (no markdown)
-//   sendWhatsAppMessage(to, msg) — Meta Graph API v19.0 send
-//   fetchMetaMedia(mediaId)      — resolve media_id → download buffer
-//   fallbackToSalesperson(to)    — human handoff
-//   agentFallback(text, db)      — LLM escalation for ambiguous queries
+//   parseIntent(text)                    — regex NL→intent classifier
+//   queryInventory(intent, db)           — DB search using existing thans query pattern
+//   confidenceCheck(results)             — threshold gate
+//   formatReply(results, intent)         — WhatsApp-safe text (no markdown)
+//   sendWhatsAppMessage(to, msg)         — Meta Graph API send text message
+//   sendQuotationNotification(to, data)  — send quotation template notification
+//   fetchMetaMedia(mediaId)              — resolve media_id → download buffer
+//   fallbackToSalesperson(to)            — human handoff
+//   agentFallback(text, db)              — LLM escalation for ambiguous queries
 
 import { createHmac }   from 'crypto'
 import https            from 'https'
@@ -17,7 +18,7 @@ import { runAgent }     from '../agents/runner/agentRunner.js'
 import logger           from '../logger.js'
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const META_API_VERSION = 'v19.0'
+const META_API_VERSION = 'v25.0'
 const META_API_BASE    = `https://graph.facebook.com/${META_API_VERSION}`
 
 // ── Signature verification ────────────────────────────────────────────────────
@@ -41,7 +42,6 @@ export function verifyMetaSignature(rawBody, signatureHeader) {
 }
 
 function require_timingSafeEqual(a, b) {
-    // crypto.timingSafeEqual requires same-length buffers
     try {
         const { timingSafeEqual } = await_crypto()
         return timingSafeEqual(a, b)
@@ -51,7 +51,6 @@ function require_timingSafeEqual(a, b) {
 // Synchronous-safe wrapper (timingSafeEqual is sync)
 function await_crypto() {
     return { timingSafeEqual: (a, b) => {
-        // Manual constant-time compare fallback
         let diff = 0
         for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i]
         return diff === 0
@@ -204,11 +203,6 @@ export async function queryInventory(intent, db) {
 /**
  * confidenceCheck(results, intent)
  * Returns { confident: boolean, reason: string }
- *
- * Low confidence triggers human fallback:
- *   - 0 results
- *   - intent === 'unknown'
- *   - query too short / generic (q.length < 2)
  */
 export function confidenceCheck(results, intent) {
     if (intent.intent === 'unknown') {
@@ -229,12 +223,7 @@ export function confidenceCheck(results, intent) {
 // ── Reply formatter ──────────────────────────────────────────────────────────
 /**
  * formatReply(results, intent)
- *
- * WhatsApp-safe text:
- *   - No markdown (no **, no #, no ---)
- *   - Max ~1500 chars (WhatsApp message limit is 4096 but keep it readable)
- *   - Emoji bullets for scannability
- *   - Shows top 5 results max
+ * WhatsApp-safe text — no markdown, max ~1500 chars, emoji bullets.
  */
 export function formatReply(results, intent) {
     if (intent.intent === 'help') {
@@ -294,11 +283,11 @@ export function formatReply(results, intent) {
     return lines.join('\n')
 }
 
-// ── Meta Graph API — send message ────────────────────────────────────────────
+// ── Meta Graph API — send text message ───────────────────────────────────────
 /**
  * sendWhatsAppMessage(to, text)
- * Sends a text message via Meta Cloud API.
- * to: phone number with country code, no +, e.g. '977981234567'
+ * Sends a plain text message via Meta Cloud API.
+ * to: phone number with country code, no +, e.g. '9779845058710'
  */
 export async function sendWhatsAppMessage(to, text) {
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
@@ -330,6 +319,59 @@ export async function sendWhatsAppMessage(to, text) {
         throw new Error(`Meta API error ${res.status}: ${err}`)
     }
     return res.json()
+}
+
+// ── Meta Graph API — send quotation template notification ────────────────────
+/**
+ * sendQuotationNotification(to)
+ * Sends the approved 'quotations' template message to a customer.
+ * to: phone number with country code, no +, e.g. '9779845058710'
+ *
+ * Template name: quotations (approved in Meta WhatsApp Manager)
+ * Template content: "Hello, we are from KT-IMPEX a textile operating system
+ *                    which enables communication between dealers and factories."
+ *
+ * Usage:
+ *   import { sendQuotationNotification } from './services/whatsappService.js'
+ *   await sendQuotationNotification('9779845058710')
+ */
+export async function sendQuotationNotification(to) {
+    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
+    const accessToken   = process.env.WHATSAPP_ACCESS_TOKEN
+    if (!phoneNumberId || !accessToken) {
+        throw new Error('WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN must be set')
+    }
+
+    const body = JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type:    'individual',
+        to,
+        type:     'template',
+        template: {
+            name:     'quotations',
+            language: { code: 'en_US' },
+        },
+    })
+
+    const url = `${META_API_BASE}/${phoneNumberId}/messages`
+    const res = await fetch(url, {
+        method:  'POST',
+        headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type':  'application/json',
+        },
+        body,
+    })
+
+    if (!res.ok) {
+        const errText = await res.text()
+        logger.error({ errText, to }, '[whatsapp] sendQuotationNotification failed')
+        throw new Error(`Meta API error ${res.status}: ${errText}`)
+    }
+
+    const data = await res.json()
+    logger.info({ to, messageId: data?.messages?.[0]?.id }, '[whatsapp] quotation notification sent')
+    return { success: true, data }
 }
 
 // ── Meta Graph API — fetch media ─────────────────────────────────────────────
@@ -386,7 +428,6 @@ export async function agentFallback(text, db) {
             context:   'Query came from a WhatsApp customer. Keep the response SHORT (under 300 chars), plain text, no markdown.',
             username:  'whatsapp',
         })
-        // Strip any markdown that might leak through
         return result.fullResponse
             .replace(/[*_~`#]/g, '')
             .slice(0, 1200)
