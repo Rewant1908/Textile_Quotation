@@ -5,6 +5,10 @@
  * Phase 8:  /api/whatsapp route registered + rawBody middleware for Meta signature verification
  * Fix: dotenv is loaded via --import ./load-env.js (see package.json start script)
  *      so all process.env vars are available before any ES module import runs.
+ *
+ * rawBody fix: captured via express.json({ verify }) so the stream is only consumed
+ * once. The previous approach (manual stream listener before express.json) drained
+ * the body stream before express.json could parse it, leaving req.body undefined.
  */
 import express       from 'express';
 import cors          from 'cors';
@@ -13,7 +17,7 @@ import rateLimit     from 'express-rate-limit';
 import logger        from './logger.js';
 import pool          from './db.js';
 
-// ── Routes ────────────────────────────────────────────────────────────────────
+// ── Routes ────────────────────────────────────────────────────────────────
 import authRouter       from './routes/auth.js';
 import operationsRouter from './routes/operations.js';
 import salesRouter      from './routes/sales.js';
@@ -27,27 +31,24 @@ import balesRouter      from './routes/bales.js';
 import quotationsRouter from './routes/quotations.js';
 import whatsappRouter   from './routes/whatsapp.js';
 
-// ── App ───────────────────────────────────────────────────────────────────────
+// ── App ───────────────────────────────────────────────────────────────────
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
-// ── Security & parsing ────────────────────────────────────────────────────────
+// ── Security ───────────────────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false }));
 
-// Phase 8: capture rawBody buffer before JSON parsing.
-// Required for Meta X-Hub-Signature-256 HMAC verification.
-// Must be registered BEFORE express.json().
-app.use((req, _res, next) => {
-    let data = [];
-    req.on('data', chunk => data.push(chunk));
-    req.on('end',  () => { req.rawBody = Buffer.concat(data); next(); });
-    req.on('error', next);
-});
+// ── Body parsing ───────────────────────────────────────────────────────
+// Phase 8 fix: capture rawBody inside the verify callback so the stream is read
+// only once by express.json itself. The old approach (manual 'data'/'end' listeners)
+// drained the stream before express.json ran, leaving req.body always undefined.
+app.use(express.json({
+    limit: '2mb',
+    verify: (req, _res, buf) => { req.rawBody = buf; },
+}));
+app.use(express.urlencoded({ extended: true }));
 
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true }));  // Phase 8: some webhook senders use form-encoded
-
-// ── CORS ──────────────────────────────────────────────────────────────────────
+// ── CORS ───────────────────────────────────────────────────────────────────
 const ALLOWED = [
     'http://localhost:5173', 'http://127.0.0.1:5173',
     'http://localhost:5174', 'http://127.0.0.1:5174',
@@ -59,10 +60,10 @@ app.use(cors({
     credentials: true,
 }));
 
-// ── Rate limiting ─────────────────────────────────────────────────────────────
+// ── Rate limiting ───────────────────────────────────────────────────────────
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, standardHeaders: true, legacyHeaders: false }));
 
-// ── Mount routes ──────────────────────────────────────────────────────────────
+// ── Mount routes ─────────────────────────────────────────────────────────────
 app.use('/api/auth',                   authRouter);
 app.use('/api/analytics',              analyticsRouter);
 app.use('/api/bales',                  balesRouter);
@@ -79,19 +80,19 @@ app.use('/api/thans',                  operationsRouter);
 app.use('/api/inventory',              operationsRouter);
 app.use('/api/whatsapp',               whatsappRouter);  // Phase 8
 
-// ── Health ────────────────────────────────────────────────────────────────────
+// ── Health ──────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
 
-// ── 404 ───────────────────────────────────────────────────────────────────────
+// ── 404 ─────────────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));
 
-// ── Global error handler ──────────────────────────────────────────────────────
+// ── Global error handler ──────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
     logger.error({ err }, 'Unhandled error');
     res.status(500).json({ error: 'Internal server error' });
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
+// ── Start ───────────────────────────────────────────────────────────────────
 async function start() {
     let conn;
     try {
@@ -103,7 +104,7 @@ async function start() {
         logger.info({ port: String(PORT), origins: ALLOWED }, 'KT IMPEX API started');
     });
 
-    // ── Crons ────────────────────────────────────────────────────────────────
+    // ── Crons ─────────────────────────────────────────────────────────────
     const { recalculateSpeeds } = await import('./routes/operations.js');
     const { flush }             = await import('./cache.js');
 
