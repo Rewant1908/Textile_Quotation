@@ -1,57 +1,52 @@
 /*
  * index.css — KT Impex global base
- * Uses the same KT design tokens as theme.css so user-facing pages
- * match the admin/dealer UI in bg, colour, and font.
+ * Mirrors the actual design tokens defined in App.css so every page
+ * (user-facing and admin) shares the same cream/red/gold palette and fonts.
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap');
 
 :root {
-  /* ── Mirror the KT brand tokens ────────────────────────────── */
-  --kt-primary:        #1a3a5c;
-  --kt-primary-hover:  #14304d;
-  --kt-accent:         #e67e22;
-  --kt-accent-hover:   #d35400;
-  --kt-success:        #27ae60;
-  --kt-danger:         #c0392b;
-  --kt-warning:        #f39c12;
+  /* ── Palette ────────────────────────────────────────── */
+  --cream:     #fbf6ed;
+  --paper:     #fffdf8;
+  --ivory:     #f4eadb;
+  --red:       #8f1d1d;
+  --red-dark:  #5f1111;
+  --ink:       #221715;
+  --muted:     #776965;
+  --line:      #e8d8c3;
+  --gold:      #b98945;
+  --green:     #287052;
+  --shadow:    0 18px 45px rgba(70,28,16,0.12);
 
-  --kt-bg:             #f0f4f8;
-  --kt-surface:        #ffffff;
-  --kt-surface-2:      #f7f9fc;
-  --kt-border:         #dde3ea;
+  /* ── Semantic aliases (used across components) ─────────────── */
+  --color-bg:             #fbf6ed;
+  --color-surface:        #fffdf8;
+  --color-surface-offset: #f4eadb;
+  --color-surface-2:      #fff8ed;
+  --color-border:         #e8d8c3;
+  --color-divider:        #e8d8c3;
+  --color-text:           #221715;
+  --color-text-muted:     #776965;
+  --color-text-faint:     #b9a99a;
+  --color-text-inverse:   #fff8ed;
+  --color-primary:        #8f1d1d;
+  --color-primary-hover:  #5f1111;
+  --color-error:          #b91c1c;
+  --color-success:        #287052;
+  --color-warning:        #b98945;
 
-  --kt-text:           #1a2332;
-  --kt-text-muted:     #5a6a7e;
-  --kt-text-faint:     #9aaabb;
-
-  --kt-glass-bg:       rgba(255,255,255,0.75);
-  --kt-glass-border:   rgba(255,255,255,0.9);
-  --kt-glass-shadow:   0 4px 24px rgba(26,58,92,0.10);
-
-  --kt-radius-sm:      6px;
-  --kt-radius-md:      10px;
-  --kt-radius-lg:      16px;
-  --kt-transition:     180ms cubic-bezier(0.16,1,0.3,1);
-
-  /* ── Legacy aliases (kept so any old var() refs still resolve) ── */
-  --text:        var(--kt-text-muted);
-  --text-h:      var(--kt-text);
-  --bg:          var(--kt-bg);
-  --border:      var(--kt-border);
-  --accent:      var(--kt-accent);
-  --accent-bg:   rgba(230,126,34,0.10);
-  --accent-border: rgba(230,126,34,0.45);
-  --shadow:      var(--kt-glass-shadow);
-  --sans:        'Inter', 'Segoe UI', system-ui, sans-serif;
-  --heading:     'Inter', 'Segoe UI', system-ui, sans-serif;
-  --mono:        ui-monospace, Consolas, monospace;
+  /* ── Typography ───────────────────────────────────── */
+  --sans:    'Inter', 'Segoe UI', system-ui, sans-serif;
+  --heading: 'Playfair Display', Georgia, serif;
+  --mono:    ui-monospace, Consolas, monospace;
 
   font: 16px/1.55 var(--sans);
   letter-spacing: 0;
   color-scheme: light;
-  color: var(--kt-text);
-  background: var(--kt-bg);
+  color: var(--ink);
+  background: var(--cream);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -62,9 +57,10 @@
 
 body {
   margin: 0;
-  background: var(--kt-bg);
-  color: var(--kt-text);
-  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  background: linear-gradient(135deg, rgba(143,29,29,0.08), transparent 34%), var(--cream);
+  color: var(--ink);
+  font-family: var(--sans);
+  min-height: 100vh;
 }
 
 #root {
@@ -72,59 +68,49 @@ body {
   max-width: 100%;
   margin: 0 auto;
   text-align: left;
-  border-inline: 0;
   min-height: 100svh;
   display: flex;
   flex-direction: column;
-  box-sizing: border-box;
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--heading);
   font-weight: 700;
-  color: var(--kt-text);
+  color: var(--red-dark);
   margin: 0;
-  line-height: 1.2;
+  line-height: 1.15;
 }
 
-h1 { font-size: clamp(28px, 5vw, 40px); letter-spacing: -0.5px; }
-h2 { font-size: clamp(20px, 3vw, 26px); letter-spacing: -0.2px; }
-h3 { font-size: 18px; }
-
-p { margin: 0; color: var(--kt-text-muted); }
+p { margin: 0; color: var(--muted); }
 
 a {
-  color: var(--kt-primary);
+  color: var(--red-dark);
   text-decoration: none;
-  transition: color var(--kt-transition);
+  transition: color 180ms ease;
 }
-a:hover { color: var(--kt-primary-hover); text-decoration: underline; }
+a:hover { color: var(--red); text-decoration: underline; }
 
-code, .counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--kt-text);
-}
 code {
+  font-family: var(--mono);
   font-size: 13px;
-  line-height: 135%;
-  padding: 3px 7px;
-  background: var(--kt-surface-2);
-  border: 1px solid var(--kt-border);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--ivory);
+  color: var(--red-dark);
+  border: 1px solid var(--line);
 }
 
-/* Scrollbar styling to match the KT palette */
+/* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--kt-bg); }
-::-webkit-scrollbar-thumb { background: var(--kt-border); border-radius: 99px; }
-::-webkit-scrollbar-thumb:hover { background: var(--kt-text-faint); }
+::-webkit-scrollbar-track { background: var(--cream); }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #d4c0a8; }
 
-/* Focus ring consistent with admin side */
+/* Focus ring */
 :focus-visible {
-  outline: 2px solid var(--kt-primary);
+  outline: 2px solid var(--red);
   outline-offset: 2px;
-  border-radius: var(--kt-radius-sm);
+  border-radius: 4px;
 }
 
 @media (prefers-reduced-motion: reduce) {
