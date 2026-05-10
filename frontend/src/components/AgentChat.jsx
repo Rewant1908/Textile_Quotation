@@ -33,7 +33,19 @@ const STARTERS = {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function newUUID()  { return crypto.randomUUID() }
+function newUUID() { return crypto.randomUUID() }
+
+// Read JWT the same way api.js does — key is kt_impex_token
+function getToken() {
+  return localStorage.getItem('kt_impex_token') || ''
+}
+
+// Base URL the same way api.js computes it
+function getBaseUrl() {
+  return import.meta.env.VITE_API_URL
+    ? import.meta.env.VITE_API_URL
+    : 'http://localhost:5000'
+}
 
 function renderMarkdown(text) {
   if (!text) return ''
@@ -61,28 +73,28 @@ function renderMarkdown(text) {
   return `<p>${text}</p>`
 }
 
-// ── Step bubble component ─────────────────────────────────────────────────────
+// ── Step bubble ───────────────────────────────────────────────────────────────
 const STEP_ICONS = {
-  thinking:         '💭',
-  tool_call:        '🔧',
-  tool_result:      '✅',
-  tool_error:       '❌',
-  spawn:            '🤖',
-  spawn_complete:   '✓',
-  coordinator_start:'🧠',
+  thinking:          '💭',
+  tool_call:         '🔧',
+  tool_result:       '✅',
+  tool_error:        '❌',
+  spawn:             '🤖',
+  spawn_complete:    '✓',
+  coordinator_start: '🧠',
 }
 
 function StepBubble({ step }) {
   const icon = STEP_ICONS[step.type] || '•'
   let label = ''
-  if (step.type === 'thinking')          label = step.message
-  else if (step.type === 'tool_call')    label = `Calling ${step.tool}(${JSON.stringify(step.args || {}).slice(0, 60)}…)`
-  else if (step.type === 'tool_result')  label = `${step.tool} → ${JSON.stringify(step.result || {}).slice(0, 80)}…`
-  else if (step.type === 'tool_error')   label = `${step.tool} error: ${step.error}`
-  else if (step.type === 'spawn')        label = `Spawning ${step.agent} agent: ${step.task?.slice(0, 60)}…`
-  else if (step.type === 'spawn_complete') label = `${step.agent} agent finished`
-  else if (step.type === 'coordinator_start') label = step.message
-  else                                   label = step.message || step.type
+  if      (step.type === 'thinking')           label = step.message
+  else if (step.type === 'tool_call')          label = `Calling ${step.tool}(${JSON.stringify(step.args || {}).slice(0, 60)}…)`
+  else if (step.type === 'tool_result')        label = `${step.tool} → ${JSON.stringify(step.result || {}).slice(0, 80)}…`
+  else if (step.type === 'tool_error')         label = `${step.tool} error: ${step.error}`
+  else if (step.type === 'spawn')              label = `Spawning ${step.agent} agent: ${step.task?.slice(0, 60)}…`
+  else if (step.type === 'spawn_complete')     label = `${step.agent} agent finished`
+  else if (step.type === 'coordinator_start')  label = step.message
+  else                                         label = step.message || step.type
 
   return (
     <div className={`ac-step ac-step--${step.type}`}>
@@ -102,7 +114,7 @@ export default function AgentChat({ user }) {
 
   const bottomRef   = useRef(null)
   const textareaRef = useRef(null)
-  const esRef       = useRef(null)   // active EventSource
+  const esRef       = useRef(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -126,18 +138,16 @@ export default function AgentChat({ user }) {
     setQuery('')
     setLoading(true)
 
-    // Add an in-progress assistant message to accumulate steps into
     const msgId = Date.now()
     setMessages(prev => [...prev, {
       role: 'assistant', id: msgId, content: null,
       steps: [], ts: Date.now(), done: false,
     }])
 
-    const addStep = (step) => {
+    const addStep = (step) =>
       setMessages(prev => prev.map(m =>
         m.id === msgId ? { ...m, steps: [...(m.steps || []), step] } : m
       ))
-    }
 
     const finalize = (content) => {
       setMessages(prev => prev.map(m =>
@@ -155,17 +165,13 @@ export default function AgentChat({ user }) {
     }
 
     try {
-      const token = localStorage.getItem('token') ||
-                    sessionStorage.getItem('token') ||
-                    document.cookie.match(/token=([^;]+)/)?.[1] || ''
-
       const resp = await fetch(
-        `${import.meta.env.VITE_API_URL || ''}/api/agents/chat`,
+        `${getBaseUrl()}/api/agents/chat`,
         {
           method:  'POST',
           headers: {
             'Content-Type':  'application/json',
-            'Authorization': `Bearer ${token}`,
+            'Authorization': `Bearer ${getToken()}`,   // ← kt_impex_token
           },
           body: JSON.stringify({ agent, message: text, session: sessionId }),
         }
@@ -173,7 +179,7 @@ export default function AgentChat({ user }) {
 
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: resp.statusText }))
-        return failWith(err.error || 'Request failed')
+        return failWith(err.error || `HTTP ${resp.status}`)
       }
 
       const reader  = resp.body.getReader()
@@ -185,7 +191,7 @@ export default function AgentChat({ user }) {
         if (done) break
         buffer += decoder.decode(value, { stream: true })
         const chunks = buffer.split('\n\n')
-        buffer = chunks.pop()            // keep incomplete last chunk
+        buffer = chunks.pop()
         for (const chunk of chunks) {
           const lines     = chunk.split('\n')
           const eventLine = lines.find(l => l.startsWith('event:'))
@@ -205,7 +211,7 @@ export default function AgentChat({ user }) {
     }
   }, [agent, query, loading, sessionId])
 
-  // ── New chat ─────────────────────────────────────────────────────────────
+  // ── New chat ──────────────────────────────────────────────────────────────
   const newChat = useCallback(async () => {
     esRef.current?.close()
     try { await API.delete(`/agents/session/${sessionId}`) } catch (_) {}
@@ -277,30 +283,25 @@ export default function AgentChat({ user }) {
           {messages.map((msg, i) => (
             <div key={i} className={`ac-msg ac-msg--${msg.role}`}>
 
-              {/* User bubble */}
               {msg.role === 'user' && (
                 <div className="ac-bubble ac-bubble--user">{msg.content}</div>
               )}
 
-              {/* Assistant bubble — shows live steps + final response */}
               {msg.role === 'assistant' && (
                 <div className="ac-bubble ac-bubble--assistant">
 
-                  {/* Live steps */}
                   {(msg.steps || []).length > 0 && (
                     <div className="ac-steps">
                       {msg.steps.map((step, si) => <StepBubble key={si} step={step} />)}
                     </div>
                   )}
 
-                  {/* Typing indicator while still loading */}
                   {!msg.done && (
                     <div className="ac-thinking">
                       <span /><span /><span />
                     </div>
                   )}
 
-                  {/* Final response */}
                   {msg.done && msg.content && !msg.isError && (
                     <div
                       className="ac-md"
@@ -308,7 +309,6 @@ export default function AgentChat({ user }) {
                     />
                   )}
 
-                  {/* Error */}
                   {msg.done && msg.isError && (
                     <div className="ac-bubble--error">{msg.content}</div>
                   )}
@@ -374,9 +374,7 @@ export default function AgentChat({ user }) {
         .ac-step--spawn       { color: var(--color-blue,    #006494); font-weight: 500; }
         .ac-step-icon { flex-shrink: 0; }
         .ac-step-label { word-break: break-word; }
-        .ac-thinking {
-          display: flex; gap: 4px; padding: 6px 2px;
-        }
+        .ac-thinking { display: flex; gap: 4px; padding: 6px 2px; }
         .ac-thinking span {
           width: 7px; height: 7px;
           background: var(--color-primary, #01696f);
