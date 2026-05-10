@@ -84,8 +84,32 @@ function runPreloader(onDone) {
     onDone()
     return
   }
+
+  // Check if return visitor — shorten preloader to ~2s
+  const isReturn = !!localStorage.getItem('kt_visited')
+  localStorage.setItem('kt_visited', '1')
+  const totalDuration = isReturn ? 2.0 : 3.0
+  const revealAt      = isReturn ? 1.8 : 3.0
+  const doneAt        = isReturn ? 2.2 : 3.5
+
+  // Show skip button after 1.5s
+  const skipTimeout = setTimeout(() => {
+    const btn = document.getElementById('pre-skip-btn')
+    if (btn) btn.style.opacity = '1'
+  }, 1500)
+
+  const skipHandler = () => {
+    clearTimeout(skipTimeout)
+    gsap.globalTimeline.clear()
+    document.getElementById('kt-preloader')?.classList.add('pre-done')
+    gsap.set('.page-reveal', { opacity: 1, y: 0, filter: 'blur(0px)' })
+    document.querySelector('.page-reveal')?.classList.add('pre-visible')
+    onDone()
+  }
+  document.getElementById('pre-skip-btn')?.addEventListener('click', skipHandler)
+
   const tl = gsap.timeline({ defaults: { ease: 'expo.out', force3D: true } })
-  tl.to('.pre-progress', { width: '100%', duration: 3.0, ease: 'power2.inOut' }, 0)
+  tl.to('.pre-progress', { width: '100%', duration: totalDuration, ease: 'power2.inOut' }, 0)
   tl.to('.pre-bolt', { scaleX: 1, duration: 0.8, ease: 'expo.out', transformOrigin: 'left center' }, 0.05)
   .to('.pre-bolt-sheen', { xPercent: 300, duration: 0.75, ease: 'power2.inOut' }, 0.1)
   .to('.pre-bolt', { xPercent: 110, duration: 0.55, ease: 'expo.in' }, 0.65)
@@ -110,18 +134,18 @@ function runPreloader(onDone) {
   tl.to('.pre-brand-sub', { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, 2.02)
   .fromTo(['.pre-curtain-left', '.pre-curtain-right'],
     { xPercent: 0 },
-    { xPercent: (i) => i === 0 ? -105 : 105, duration: 0.85, ease: 'expo.inOut' }, 2.65
+    { xPercent: (i) => i === 0 ? -105 : 105, duration: 0.85, ease: 'expo.inOut' }, isReturn ? 1.5 : 2.65
   )
-  .to('.pre-logo', { opacity: 0, scale: 0.92, duration: 0.35 }, 2.65)
-  .to('.pre-silk',  { opacity: 0, duration: 0.3 }, 2.65)
+  .to('.pre-logo', { opacity: 0, scale: 0.92, duration: 0.35 }, isReturn ? 1.5 : 2.65)
+  .to('.pre-silk',  { opacity: 0, duration: 0.3 }, isReturn ? 1.5 : 2.65)
   .to('.page-reveal', {
     opacity: 1, y: 0, filter: 'blur(0px)', duration: 0.65, ease: 'power2.out',
     onStart: () => document.querySelector('.page-reveal')?.classList.add('pre-visible'),
-  }, 3.0)
+  }, revealAt)
   tl.add(() => {
     document.getElementById('kt-preloader')?.classList.add('pre-done')
     onDone()
-  }, 3.5)
+  }, doneAt)
 }
 
 const BRAND_LETTERS = 'KT Impex'.split('')
@@ -152,7 +176,6 @@ export default function LoginPage({ onLogin }) {
     const username = e.target.username.value.trim()
     const password = e.target.password.value.trim()
     const email    = isSignup ? (e.target.email?.value?.trim() || '') : ''
-    // Fix: backend mounts auth at /api/auth/login and /api/auth/signup
     const endpoint = isSignup ? '/auth/signup' : '/auth/login'
     const body     = isSignup ? { username, password, email } : { username, password }
     try {
@@ -207,6 +230,19 @@ export default function LoginPage({ onLogin }) {
         <div className="pre-curtain pre-curtain-left"  />
         <div className="pre-curtain pre-curtain-right" />
         <div className="pre-progress" />
+        <button
+          id="pre-skip-btn"
+          aria-label="Skip intro animation"
+          style={{
+            position: 'fixed', bottom: '2rem', right: '2rem',
+            background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.3)',
+            color: '#fff', padding: '0.4rem 1rem', borderRadius: '4px',
+            fontSize: '13px', cursor: 'pointer', opacity: 0,
+            transition: 'opacity 0.4s', zIndex: 9999,
+          }}
+        >
+          Skip
+        </button>
       </div>
 
       <div className="public-page page-reveal">
@@ -227,8 +263,8 @@ export default function LoginPage({ onLogin }) {
           </nav>
         </header>
 
-        <main id="top" className="public-main">
-          <section className="public-hero">
+        <main id="main-content" className="public-main">
+          <section className="public-hero" id="top">
             <div className="public-hero-copy">
               <p className="eyebrow">Established around 2002 | Birgunj, Nepal</p>
               <h1>KT Impex</h1>
@@ -238,16 +274,16 @@ export default function LoginPage({ onLogin }) {
                 <a className="btn btn-secondary" href="#login">Generate Quotation</a>
               </div>
             </div>
-            <div className="cinematic-showcase" aria-label="Animated hanging fabric samples">
+            <div className="cinematic-showcase" role="img" aria-label="Hanging fabric samples: Suiting Twill, Shirting, Cotton, Fine Cashmere, Uniform Lots, Dress Material">
               <div className="studio-light light-left" />
               <div className="studio-light light-right" />
               <div className="camera-scan" />
-              <div className="fabric-rack">
+              <div className="fabric-rack" aria-hidden="true">
                 <div className="rack-line" />
                 <div className="fabric-track">
                   {['Suiting Twill','Shirting','Cotton','Fine Cashmere','Uniform Lots','Dress Material',
                     'Suiting Twill','Shirting','Cotton','Fine Cashmere','Uniform Lots','Dress Material'].map((n,i)=>(
-                    <article key={i} className={`fabric-sample sample-${['twill','stripe','cotton','cashmere','uniform','dress'][i%6]}`}><span>{n}</span></article>
+                    <article key={i} className={`fabric-sample sample-${['twill','stripe','cotton','cashmere','uniform','dress'][i%6]}`} aria-hidden="true"><span>{n}</span></article>
                   ))}
                 </div>
               </div>
@@ -266,7 +302,9 @@ export default function LoginPage({ onLogin }) {
             <div className="founder-card">
               <div className="founder-photo-wrap">
                 <img src="/founder.jpeg" alt="Sandeep Kumar Agrawal – Founder, KT Impex"
-                  className="founder-photo-img" width="160" height="160" loading="lazy" />
+                  className="founder-photo-img" width="160" height="160" loading="lazy"
+                  onError={(e) => { e.currentTarget.style.display = 'none' }}
+                />
               </div>
               <div>
                 <p className="eyebrow">Founder</p>
@@ -286,9 +324,9 @@ export default function LoginPage({ onLogin }) {
               <p className="eyebrow">Fabric Types</p>
               <h2>Focused product lines for wholesale movement</h2>
             </div>
-            <div className="fabric-showcase">
+            <div className="fabric-showcase" role="list" aria-label="Available fabric types">
               {fabricTypes.map(type => (
-                <article className={`fabric-tile tile-${type.toLowerCase().replace(/ /g,'-')}`} key={type}>
+                <article className={`fabric-tile tile-${type.toLowerCase().replace(/ /g,'-')}`} key={type} role="listitem">
                   <span>{type}</span>
                 </article>
               ))}
@@ -321,7 +359,7 @@ export default function LoginPage({ onLogin }) {
             <div className="sample-grid">
               {sampleProducts.map(product => (
                 <article className="sample-card" key={product.name}>
-                  <div className={`sample-image ${product.imageClass}`} />
+                  <div className={`sample-image ${product.imageClass}`} role="img" aria-label={`${product.name} fabric sample`} />
                   <div className="sample-body">
                     <span className={`badge badge-${product.type.toLowerCase().replace(/ /g,'-')}`}>{product.type}</span>
                     <h3>{product.name}</h3>
@@ -363,21 +401,30 @@ export default function LoginPage({ onLogin }) {
                   <label htmlFor="password">Password</label>
                   <input id="password" name="password" type="password" placeholder="Enter password" required />
                 </div>
-                {error   && <p className="login-error">{error}</p>}
-                {success && <p className="login-success">{success}</p>}
+                {error   && <p className="login-error" role="alert">{error}</p>}
+                {success && <p className="login-success" role="status">{success}</p>}
                 <button type="submit" className="btn btn-primary login-btn" disabled={loading}>
                   {loading ? '...' : isSignup ? 'Create Account' : 'Login'}
                 </button>
               </form>
               <p className="login-toggle">
                 {isSignup ? 'Already have an account?' : "Don't have an account?"}{' '}
-                <span onClick={() => { setIsSignup(!isSignup); setError(''); setSuccess('') }}>
+                <button
+                  type="button"
+                  className="login-toggle-btn"
+                  onClick={() => { setIsSignup(!isSignup); setError(''); setSuccess('') }}
+                >
                   {isSignup ? 'Login' : 'Sign Up'}
-                </span>
+                </button>
               </p>
             </div>
           </section>
         </main>
+
+        <footer className="public-footer">
+          <p>&copy; {new Date().getFullYear()} KT Impex, Birgunj, Nepal. All rights reserved.</p>
+          <p>Wholesale textile dealer — suiting, shirting &amp; dress material lots.</p>
+        </footer>
       </div>
     </>
   )
