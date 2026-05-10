@@ -1,10 +1,18 @@
 // backend/agents/tools/quotationTools.js
-// Rewritten to match real DB schema:
-//   TABLE: quotations  (PK: quotation_id)
-//   STATUS ENUM: 'draft' | 'pending' | 'sent' | 'accepted' | 'declined'
-//   "pending" for agent purposes = status IN ('draft','pending','sent')
-//   No quotation_items table — items are stored per-quotation as denormalised data
-//   or joined via enquiry_items if applicable. Kept simple: list/get/accept/reject.
+// Aligned to real DB schema (verified from migration + quotations.js route):
+//
+//   TABLE: quotations
+//     quotation_id, quotation_number, customer_id, user_id,
+//     status, total_amount, decline_reason, created_at, updated_at
+//   STATUS ENUM: 'draft' | 'sent' | 'accepted' | 'declined'
+//     ('pending' treated as alias for 'draft' in agent context)
+//
+//   TABLE: customers
+//     customer_id, customer_name, contact_phone, email
+//
+//   NO discount_percentage column.
+//   NO notes column (use decline_reason for rejections).
+//   NO retailers join on quotations (quotations use customer_id → customers).
 
 export const quotationTools = [
   {
@@ -15,19 +23,17 @@ export const quotationTools = [
     }, required: [] },
     execute: async (args, db) => {
       const limit = args.limit ?? 20
-      const [rows] = await db.query(
+      const rows = await db.query(
         `SELECT q.quotation_id,
                 q.quotation_number,
                 q.status,
                 q.total_amount,
-                q.discount_percentage,
-                q.notes,
                 q.created_at,
                 q.updated_at,
-                r.retailer_name,
-                r.city
+                c.customer_name,
+                c.contact_phone
          FROM   quotations q
-         JOIN   retailers  r ON r.retailer_id = q.retailer_id
+         LEFT JOIN customers c ON c.customer_id = q.customer_id
          WHERE  q.status IN ('draft', 'pending', 'sent')
          ORDER  BY q.created_at ASC
          LIMIT  ?`, [limit]
@@ -43,13 +49,21 @@ export const quotationTools = [
       quotation_id: { type: 'number', description: 'The quotation ID.' }
     }, required: ['quotation_id'] },
     execute: async (args, db) => {
-      const [[q]] = await db.query(
-        `SELECT q.*,
-                r.retailer_name, r.city, r.phone
+      const rows = await db.query(
+        `SELECT q.quotation_id,
+                q.quotation_number,
+                q.status,
+                q.total_amount,
+                q.decline_reason,
+                q.created_at,
+                q.updated_at,
+                c.customer_name,
+                c.contact_phone
          FROM   quotations q
-         JOIN   retailers  r ON r.retailer_id = q.retailer_id
+         LEFT JOIN customers c ON c.customer_id = q.customer_id
          WHERE  q.quotation_id = ?`, [args.quotation_id]
       )
+      const q = rows[0]
       if (!q) return { error: `Quotation #${args.quotation_id} not found` }
       return { quotation: q }
     }
@@ -57,27 +71,24 @@ export const quotationTools = [
 
   {
     name: 'accept_quotation',
-    description: 'Accept a quotation and set its status to accepted. Optionally apply a discount percentage and add notes. Use when user says accept, approve, or confirm a quotation.',
+    description: 'Accept a quotation and set its status to accepted. Use when user says accept, approve, or confirm a quotation.',
     parameters: { type: 'object', properties: {
-      quotation_id:  { type: 'number', description: 'Quotation ID to accept.' },
-      discount_pct:  { type: 'number', description: 'Optional discount % to apply (0-100).' },
-      notes:         { type: 'string', description: 'Optional approval notes.' }
+      quotation_id: { type: 'number', description: 'Quotation ID to accept.' }
     }, required: ['quotation_id'] },
     execute: async (args, db) => {
-      const [[existing]] = await db.query(
+      const rows = await db.query(
         `SELECT status FROM quotations WHERE quotation_id = ?`, [args.quotation_id]
       )
+      const existing = rows[0]
       if (!existing) return { error: `Quotation #${args.quotation_id} not found` }
       if (existing.status === 'accepted') return { error: `Quotation #${args.quotation_id} is already accepted` }
 
       await db.query(
         `UPDATE quotations
          SET    status = 'accepted',
-                notes  = COALESCE(?, notes),
-                discount_percentage = COALESCE(?, discount_percentage),
                 updated_at = NOW()
          WHERE  quotation_id = ?`,
-        [args.notes ?? null, args.discount_pct ?? null, args.quotation_id]
+        [args.quotation_id]
       )
       return { success: true, quotation_id: args.quotation_id, new_status: 'accepted', message: `Quotation #${args.quotation_id} has been accepted.` }
     }
@@ -91,15 +102,18 @@ export const quotationTools = [
       reason:       { type: 'string', description: 'Reason for rejection.' }
     }, required: ['quotation_id', 'reason'] },
     execute: async (args, db) => {
-      const [[existing]] = await db.query(
+      const rows = await db.query(
         `SELECT status FROM quotations WHERE quotation_id = ?`, [args.quotation_id]
       )
+      const existing = rows[0]
       if (!existing) return { error: `Quotation #${args.quotation_id} not found` }
       if (existing.status === 'declined') return { error: `Quotation #${args.quotation_id} is already declined` }
 
       await db.query(
         `UPDATE quotations
-         SET status = 'declined', notes = ?, updated_at = NOW()
+         SET status = 'declined',
+             decline_reason = ?,
+             updated_at = NOW()
          WHERE quotation_id = ?`,
         [args.reason, args.quotation_id]
       )
@@ -116,18 +130,26 @@ export const quotationTools = [
     }, required: [] },
     execute: async (args, db) => {
       const limit = args.limit ?? 25
-      // Use parameterised where clause to avoid injection
       const validStatuses = ['draft', 'pending', 'sent', 'accepted', 'declined']
       const useStatus = args.status && validStatuses.includes(args.status)
       const sql = useStatus
-        ? `SELECT q.quotation_id, q.quotation_number, q.status, q.total_amount, q.discount_percentage, q.created_at, q.updated_at, r.retailer_name, r.city
-           FROM   quotations q JOIN retailers r ON r.retailer_id = q.retailer_id
-           WHERE  q.status = ? ORDER BY q.updated_at DESC LIMIT ?`
-        : `SELECT q.quotation_id, q.quotation_number, q.status, q.total_amount, q.discount_percentage, q.created_at, q.updated_at, r.retailer_name, r.city
-           FROM   quotations q JOIN retailers r ON r.retailer_id = q.retailer_id
-           ORDER  BY q.updated_at DESC LIMIT ?`
+        ? `SELECT q.quotation_id, q.quotation_number, q.status, q.total_amount,
+                  q.decline_reason, q.created_at, q.updated_at,
+                  c.customer_name, c.contact_phone
+           FROM   quotations q
+           LEFT JOIN customers c ON c.customer_id = q.customer_id
+           WHERE  q.status = ?
+           ORDER  BY q.updated_at DESC
+           LIMIT  ?`
+        : `SELECT q.quotation_id, q.quotation_number, q.status, q.total_amount,
+                  q.decline_reason, q.created_at, q.updated_at,
+                  c.customer_name, c.contact_phone
+           FROM   quotations q
+           LEFT JOIN customers c ON c.customer_id = q.customer_id
+           ORDER  BY q.updated_at DESC
+           LIMIT  ?`
       const params = useStatus ? [args.status, limit] : [limit]
-      const [rows] = await db.query(sql, params)
+      const rows = await db.query(sql, params)
       return { quotations: rows, count: rows.length }
     }
   }
