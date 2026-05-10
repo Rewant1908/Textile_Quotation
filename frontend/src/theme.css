@@ -1,0 +1,428 @@
+/*
+ * theme.css — KT Impex Dealer UI design tokens
+ * Imported by index.css. Does NOT affect admin or login pages.
+ * No dark mode. Dealer-facing only.
+ */
+
+:root {
+  /* Brand */
+  --kt-primary:        #1a3a5c;
+  --kt-primary-hover:  #14304d;
+  --kt-accent:         #e67e22;
+  --kt-accent-hover:   #d35400;
+  --kt-success:        #27ae60;
+  --kt-danger:         #c0392b;
+  --kt-warning:        #f39c12;
+
+  /* Surfaces */
+  --kt-bg:             #f0f4f8;
+  --kt-surface:        #ffffff;
+  --kt-surface-2:      #f7f9fc;
+  --kt-border:         #dde3ea;
+
+  /* Text */
+  --kt-text:           #1a2332;
+  --kt-text-muted:     #5a6a7e;
+  --kt-text-faint:     #9aaabb;
+
+  /* Glass card */
+  --kt-glass-bg:       rgba(255,255,255,0.75);
+  --kt-glass-border:   rgba(255,255,255,0.9);
+  --kt-glass-shadow:   0 4px 24px rgba(26,58,92,0.10);
+
+  /* Radius */
+  --kt-radius-sm:      6px;
+  --kt-radius-md:      10px;
+  --kt-radius-lg:      16px;
+
+  /* Transitions */
+  --kt-transition:     180ms cubic-bezier(0.16,1,0.3,1);
+}
+
+/* ── Dealer page wrapper ──────────────────────────────────────────────── */
+.dealer-page {
+  background: var(--kt-bg);
+  min-height: 100vh;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  color: var(--kt-text);
+}
+
+/* ── Glass card ──────────────────────────────────────────────────────── */
+.kt-card {
+  background: var(--kt-glass-bg);
+  border: 1px solid var(--kt-glass-border);
+  border-radius: var(--kt-radius-lg);
+  box-shadow: var(--kt-glass-shadow);
+  padding: 28px 32px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* ── Stat card ───────────────────────────────────────────────────────── */
+.kt-stat-card {
+  background: var(--kt-surface);
+  border: 1px solid var(--kt-border);
+  border-radius: var(--kt-radius-md);
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(26,58,92,0.06);
+  transition: box-shadow var(--kt-transition), transform var(--kt-transition);
+}
+.kt-stat-card:hover {
+  box-shadow: 0 6px 20px rgba(26,58,92,0.12);
+  transform: translateY(-2px);
+}
+.kt-stat-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--kt-text-muted);
+}
+.kt-stat-value {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--kt-primary);
+  line-height: 1;
+}
+.kt-stat-sub {
+  font-size: 12px;
+  color: var(--kt-text-faint);
+}
+
+/* ── Dealer header ───────────────────────────────────────────────────── */
+.kt-header {
+  background: var(--kt-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 32px;
+  height: 60px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.18);
+}
+.kt-header-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.kt-header-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--kt-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: -0.5px;
+  color: #fff;
+  flex-shrink: 0;
+}
+.kt-header-name {
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: -0.3px;
+}
+.kt-header-sub {
+  font-size: 11px;
+  color: rgba(255,255,255,0.65);
+  display: block;
+}
+.kt-header-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.kt-user-pill {
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 20px;
+  padding: 4px 14px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.kt-btn-logout {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.3);
+  color: #fff;
+  border-radius: var(--kt-radius-sm);
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--kt-transition);
+}
+.kt-btn-logout:hover { background: rgba(255,255,255,0.22); }
+
+/* ── Dealer nav tabs ─────────────────────────────────────────────────── */
+.kt-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--kt-primary);
+  padding: 0 32px;
+  border-bottom: 3px solid rgba(255,255,255,0.08);
+}
+.kt-tab-btn {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,0.65);
+  padding: 12px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -3px;
+  transition: color var(--kt-transition), border-color var(--kt-transition);
+  white-space: nowrap;
+}
+.kt-tab-btn:hover { color: #fff; }
+.kt-tab-btn.active {
+  color: #fff;
+  border-bottom-color: var(--kt-accent);
+  font-weight: 700;
+}
+
+/* ── Main content area ───────────────────────────────────────────────── */
+.kt-content {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+/* ── Dealer footer ───────────────────────────────────────────────────── */
+.kt-footer {
+  background: var(--kt-primary);
+  color: rgba(255,255,255,0.55);
+  text-align: center;
+  padding: 16px 24px;
+  font-size: 12px;
+  margin-top: auto;
+}
+
+/* ── Forms ────────────────────────────────────────────────────────────── */
+.kt-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.kt-form-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kt-text-muted);
+  letter-spacing: 0.03em;
+}
+.kt-form-group input,
+.kt-form-group select,
+.kt-form-group textarea {
+  border: 1.5px solid var(--kt-border);
+  border-radius: var(--kt-radius-sm);
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--kt-text);
+  background: var(--kt-surface);
+  transition: border-color var(--kt-transition), box-shadow var(--kt-transition);
+  outline: none;
+}
+.kt-form-group input:focus,
+.kt-form-group select:focus,
+.kt-form-group textarea:focus {
+  border-color: var(--kt-primary);
+  box-shadow: 0 0 0 3px rgba(26,58,92,0.10);
+}
+.kt-form-group input::placeholder { color: var(--kt-text-faint); }
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+.kt-btn {
+  border: none;
+  border-radius: var(--kt-radius-sm);
+  padding: 10px 22px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--kt-transition), transform var(--kt-transition), box-shadow var(--kt-transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.kt-btn:active { transform: scale(0.97); }
+.kt-btn-primary {
+  background: var(--kt-primary);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(26,58,92,0.18);
+}
+.kt-btn-primary:hover {
+  background: var(--kt-primary-hover);
+  box-shadow: 0 4px 16px rgba(26,58,92,0.28);
+}
+.kt-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+.kt-btn-secondary {
+  background: var(--kt-surface);
+  color: var(--kt-primary);
+  border: 1.5px solid var(--kt-border);
+}
+.kt-btn-secondary:hover { background: var(--kt-surface-2); }
+.kt-btn-accent {
+  background: var(--kt-accent);
+  color: #fff;
+}
+.kt-btn-accent:hover { background: var(--kt-accent-hover); }
+.kt-btn-danger {
+  background: var(--kt-danger);
+  color: #fff;
+}
+.kt-btn-sm { padding: 6px 12px; font-size: 12px; }
+
+/* ── Toast ───────────────────────────────────────────────────────────── */
+.kt-toast {
+  padding: 12px 18px;
+  border-radius: var(--kt-radius-sm);
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 16px;
+  animation: kt-fadein 0.2s ease;
+}
+@keyframes kt-fadein { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
+.kt-toast-success { background: #eafaf1; color: #1a6636; border: 1px solid #a9dfbf; }
+.kt-toast-error   { background: #fdf2f2; color: #922b21; border: 1px solid #f5b7b1; }
+.kt-toast-info    { background: #eaf4fd; color: #1a5276; border: 1px solid #aed6f1; }
+
+/* ── Table ───────────────────────────────────────────────────────────── */
+.kt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.kt-table th {
+  background: var(--kt-surface-2);
+  color: var(--kt-text-muted);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 2px solid var(--kt-border);
+}
+.kt-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--kt-border);
+  color: var(--kt-text);
+  vertical-align: middle;
+}
+.kt-table tr:last-child td { border-bottom: none; }
+.kt-table tr:hover td { background: var(--kt-surface-2); }
+
+/* ── Status badge ───────────────────────────────────────────────────── */
+.kt-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+.kt-badge-draft    { background: #eaf0fb; color: #2c5faa; }
+.kt-badge-sent     { background: #e8f8f5; color: #148f77; }
+.kt-badge-accepted { background: #eafaf1; color: #1a6636; }
+.kt-badge-declined { background: #fdf2f2; color: #922b21; }
+.kt-badge-pending  { background: #fef9e7; color: #9a7d0a; }
+
+/* ── Modal overlay ───────────────────────────────────────────────────── */
+.kt-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10,20,40,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  animation: kt-fadein 0.15s ease;
+}
+.kt-modal {
+  background: var(--kt-surface);
+  border-radius: var(--kt-radius-lg);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  width: 100%;
+  max-width: 560px;
+  max-height: 85vh;
+  overflow-y: auto;
+  animation: kt-slidein 0.2s cubic-bezier(0.16,1,0.3,1);
+}
+@keyframes kt-slidein {
+  from { opacity:0; transform:translateY(24px) scale(0.97); }
+  to   { opacity:1; transform:none; }
+}
+.kt-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--kt-border);
+}
+.kt-modal-header h3 { margin: 0; font-size: 17px; font-weight: 700; color: var(--kt-text); }
+.kt-modal-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: var(--kt-text-muted);
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.kt-modal-close:hover { background: var(--kt-surface-2); }
+.kt-modal-body {
+  padding: 20px 24px;
+}
+.kt-modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--kt-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ── Stats grid ─────────────────────────────────────────────────────── */
+.kt-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+/* ── Section heading ─────────────────────────────────────────────────── */
+.kt-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--kt-text);
+  margin: 0 0 16px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--kt-border);
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────── */
+.kt-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--kt-text-muted);
+}
+.kt-empty-icon { font-size: 36px; margin-bottom: 10px; }
+.kt-empty p { font-size: 14px; }
+
+/* ── Responsive ──────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .kt-content { padding: 20px 16px; }
+  .kt-card { padding: 20px 18px; }
+  .kt-header { padding: 0 16px; }
+  .kt-tabs { padding: 0 16px; overflow-x: auto; }
+  .kt-stats-grid { grid-template-columns: 1fr 1fr; }
+  .kt-modal { max-width: 100%; }
+}

@@ -3,6 +3,7 @@
  *
  * Phase 7:  /api/admin/settings route registered
  * Phase 8:  /api/whatsapp route registered + rawBody middleware for Meta signature verification
+ * Phase 9:  /api/dealers route registered (dealer profile endpoints)
  * Fix: dotenv is loaded via --import ./load-env.js (see package.json start script)
  *      so all process.env vars are available before any ES module import runs.
  *
@@ -30,6 +31,7 @@ import analyticsRouter  from './routes/analytics.js';
 import balesRouter      from './routes/bales.js';
 import quotationsRouter from './routes/quotations.js';
 import whatsappRouter   from './routes/whatsapp.js';
+import dealersRouter    from './routes/dealers.js';
 
 // ── App ───────────────────────────────────────────────────────────────────
 const app  = express();
@@ -39,9 +41,6 @@ const PORT = process.env.PORT || 5000;
 app.use(helmet({ contentSecurityPolicy: false }));
 
 // ── Body parsing ───────────────────────────────────────────────────────
-// Phase 8 fix: capture rawBody inside the verify callback so the stream is read
-// only once by express.json itself. The old approach (manual 'data'/'end' listeners)
-// drained the stream before express.json ran, leaving req.body always undefined.
 app.use(express.json({
     limit: '2mb',
     verify: (req, _res, buf) => { req.rawBody = buf; },
@@ -78,7 +77,8 @@ app.use('/api/admin',                  operationsRouter);
 app.use('/api/operations',             operationsRouter);
 app.use('/api/thans',                  operationsRouter);
 app.use('/api/inventory',              operationsRouter);
-app.use('/api/whatsapp',               whatsappRouter);  // Phase 8
+app.use('/api/whatsapp',               whatsappRouter);
+app.use('/api/dealers',                dealersRouter);  // Phase 9
 
 // ── Health ──────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
