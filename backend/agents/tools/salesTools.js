@@ -1,5 +1,15 @@
 // backend/agents/tools/salesTools.js
-// Real database-backed tools for the Sales Agent.
+// Real DB schema for transactions (verified from memoryManager + sales route):
+//   TABLE: transactions
+//     transaction_id, retailer_id, than_id, price, quantity,
+//     margin, payment_method, discount, created_at
+//   NO: total_amount, transaction_type, transaction_date,
+//       payment_status, amount_paid, product_id
+//
+//   TABLE: retailers
+//     retailer_id, shop_name, market_location, payment_pattern,
+//     outstanding_balance, preferred_price_segment, is_deleted
+//   NO: name, city, phone, credit_limit, status columns
 
 export const salesTools = [
   {
@@ -20,21 +30,22 @@ export const salesTools = [
     },
     execute: async (args, db) => {
       const periodMap = {
-        today:        'DATE(transaction_date) = CURDATE()',
-        this_week:    'YEARWEEK(transaction_date, 1) = YEARWEEK(NOW(), 1)',
-        this_month:   'MONTH(transaction_date) = MONTH(NOW()) AND YEAR(transaction_date) = YEAR(NOW())',
-        last_month:   'MONTH(transaction_date) = MONTH(NOW() - INTERVAL 1 MONTH) AND YEAR(transaction_date) = YEAR(NOW() - INTERVAL 1 MONTH)',
-        last_30_days: 'transaction_date >= NOW() - INTERVAL 30 DAY',
-        last_90_days: 'transaction_date >= NOW() - INTERVAL 90 DAY',
+        today:        'DATE(created_at) = CURDATE()',
+        this_week:    'YEARWEEK(created_at, 1) = YEARWEEK(NOW(), 1)',
+        this_month:   'MONTH(created_at) = MONTH(NOW()) AND YEAR(created_at) = YEAR(NOW())',
+        last_month:   'MONTH(created_at) = MONTH(NOW() - INTERVAL 1 MONTH) AND YEAR(created_at) = YEAR(NOW() - INTERVAL 1 MONTH)',
+        last_30_days: 'created_at >= NOW() - INTERVAL 30 DAY',
+        last_90_days: 'created_at >= NOW() - INTERVAL 90 DAY',
       }
       const condition = periodMap[args.period] || periodMap['this_month']
-      const [rows] = await db.query(
-        `SELECT COUNT(*)           AS transaction_count,
-                SUM(total_amount)  AS total_revenue,
-                SUM(quantity)      AS total_units_sold,
-                AVG(total_amount)  AS avg_transaction_value
+      const rows = await db.query(
+        `SELECT COUNT(*)                            AS transaction_count,
+                ROUND(SUM(price * quantity), 2)     AS total_revenue,
+                SUM(quantity)                       AS total_units_sold,
+                ROUND(AVG(price * quantity), 2)     AS avg_transaction_value,
+                ROUND(SUM(margin * quantity), 2)    AS total_margin
          FROM   transactions
-         WHERE  ${condition} AND transaction_type = 'sale'`
+         WHERE  ${condition}`
       )
       return { period: args.period, summary: rows[0] }
     },
@@ -43,7 +54,7 @@ export const salesTools = [
   {
     name: 'get_top_selling_products',
     description:
-      'Returns the best-selling products by revenue or quantity sold. ' +
+      'Returns the best-selling products by revenue or quantity. ' +
       'Use when asked what is selling best, top performers, or bestsellers.',
     parameters: {
       type: 'object',
@@ -56,15 +67,15 @@ export const salesTools = [
     execute: async (args, db) => {
       const limit = args.limit ?? 10
       const days  = args.days  ?? 30
-      const [rows] = await db.query(
+      const rows = await db.query(
         `SELECT p.product_name, p.category,
-                SUM(tx.quantity)     AS total_units_sold,
-                SUM(tx.total_amount) AS total_revenue,
-                COUNT(tx.id)         AS transaction_count
+                SUM(tx.quantity)                   AS total_units_sold,
+                ROUND(SUM(tx.price * tx.quantity), 2) AS total_revenue,
+                COUNT(tx.transaction_id)           AS transaction_count
          FROM   transactions tx
-         JOIN   products p ON p.product_id = tx.product_id
-         WHERE  tx.transaction_type = 'sale'
-           AND  tx.transaction_date >= NOW() - INTERVAL ? DAY
+         JOIN   thans th ON th.than_id = tx.than_id
+         JOIN   products p ON p.product_id = th.product_id
+         WHERE  tx.created_at >= NOW() - INTERVAL ? DAY
          GROUP  BY p.product_id, p.product_name, p.category
          ORDER  BY total_revenue DESC
          LIMIT  ?`,
@@ -90,16 +101,15 @@ export const salesTools = [
     execute: async (args, db) => {
       const days  = args.days  ?? 30
       const limit = args.limit ?? 10
-      const [rows] = await db.query(
-        `SELECT r.retailer_id, r.name AS retailer_name, r.city,
-                SUM(tx.total_amount) AS total_purchases,
-                COUNT(tx.id)         AS transaction_count,
-                SUM(tx.quantity)     AS total_units
+      const rows = await db.query(
+        `SELECT r.retailer_id, r.shop_name AS retailer_name, r.market_location,
+                ROUND(SUM(tx.price * tx.quantity), 2) AS total_purchases,
+                COUNT(tx.transaction_id)              AS transaction_count,
+                SUM(tx.quantity)                      AS total_units
          FROM   transactions tx
          JOIN   retailers r ON r.retailer_id = tx.retailer_id
-         WHERE  tx.transaction_type = 'sale'
-           AND  tx.transaction_date >= NOW() - INTERVAL ? DAY
-         GROUP  BY r.retailer_id, r.name, r.city
+         WHERE  tx.created_at >= NOW() - INTERVAL ? DAY
+         GROUP  BY r.retailer_id, r.shop_name, r.market_location
          ORDER  BY total_purchases DESC
          LIMIT  ?`,
         [days, limit]
@@ -122,14 +132,13 @@ export const salesTools = [
     },
     execute: async (args, db) => {
       const days = args.days ?? 14
-      const [rows] = await db.query(
-        `SELECT DATE(transaction_date)  AS sale_date,
-                SUM(total_amount)       AS revenue,
-                SUM(quantity)           AS units_sold,
-                COUNT(*)                AS transactions
+      const rows = await db.query(
+        `SELECT DATE(created_at)                      AS sale_date,
+                ROUND(SUM(price * quantity), 2)       AS revenue,
+                SUM(quantity)                         AS units_sold,
+                COUNT(*)                              AS transactions
          FROM   transactions
-         WHERE  transaction_type = 'sale'
-           AND  transaction_date >= NOW() - INTERVAL ? DAY
+         WHERE  created_at >= NOW() - INTERVAL ? DAY
          GROUP  BY sale_date
          ORDER  BY sale_date ASC`,
         [days]
@@ -141,7 +150,7 @@ export const salesTools = [
   {
     name: 'get_outstanding_payments',
     description:
-      'Returns retailers with unpaid or partially paid balances. ' +
+      'Returns retailers with outstanding balance > 0. ' +
       'Use when asked about dues, outstanding payments, or credit exposure.',
     parameters: {
       type: 'object',
@@ -152,16 +161,12 @@ export const salesTools = [
     },
     execute: async (args, db) => {
       const minAmount = args.min_amount ?? 0
-      const [rows] = await db.query(
-        `SELECT r.retailer_id, r.name AS retailer_name, r.phone, r.city,
-                SUM(tx.total_amount - COALESCE(tx.amount_paid, 0)) AS outstanding_balance,
-                COUNT(*) AS unpaid_invoices
-         FROM   transactions tx
-         JOIN   retailers r ON r.retailer_id = tx.retailer_id
-         WHERE  tx.payment_status IN ('unpaid','partial')
-           AND  tx.transaction_type = 'sale'
-         GROUP  BY r.retailer_id, r.name, r.phone, r.city
-         HAVING outstanding_balance > ?
+      const rows = await db.query(
+        `SELECT retailer_id, shop_name AS retailer_name,
+                market_location, outstanding_balance, payment_pattern
+         FROM   retailers
+         WHERE  outstanding_balance > ?
+           AND  (is_deleted = 0 OR is_deleted IS NULL)
          ORDER  BY outstanding_balance DESC
          LIMIT  50`,
         [minAmount]
