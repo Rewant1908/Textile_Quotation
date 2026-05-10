@@ -11,7 +11,6 @@ import SupplierManager      from './components/SupplierManager'
 import LoginPage            from './components/LoginPage'
 import DeadStockAnalytics   from './components/DeadStockAnalytics'
 import AgentChat            from './components/AgentChat'
-import WarehouseIntelligence from './components/WarehouseIntelligence'
 import AnalyticsDashboard   from './components/AnalyticsDashboard'
 import './App.css'
 
@@ -27,7 +26,6 @@ const ADMIN_TABS = [
     'Quotation Requests',
     'Manage Products',
     'AI Agents',
-    'Warehouse AI',
 ]
 
 const STORAGE_KEY = 'kt_impex_user'
@@ -93,7 +91,6 @@ function App() {
         setActiveTab(0)
     }
 
-    // Listen for 401 / session-expired events dispatched by api.js
     useEffect(() => {
         const handleExpiry = () => {
             setSessionExpired(true)
@@ -167,7 +164,6 @@ function App() {
                             {activeTab === 7  && <QuotationHistory      user={user} />}
                             {activeTab === 8  && <AdminProductManager   user={user} />}
                             {activeTab === 9  && <AgentChat             user={user} />}
-                            {activeTab === 10 && <WarehouseIntelligence user={user} />}
                         </>
                     ) : (
                         <>
