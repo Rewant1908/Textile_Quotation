@@ -6,6 +6,7 @@
 //   queryInventory(intent, db)           — DB search using existing thans query pattern
 //   confidenceCheck(results, intent)     — threshold gate
 //   formatReply(results, intent)         — WhatsApp-safe text (no markdown)
+//   formatWhatsAppNumber(phone, cc)      — normalise phone → E.164 without +
 //   sendWhatsAppMessage(to, msg)         — Meta Graph API send text message
 //   sendQuotationNotification(to)        — send template notification
 //   fetchMetaMediaUrl(mediaId)           — resolve media_id → download URL
@@ -29,6 +30,40 @@ const IS_PROD = process.env.NODE_ENV === 'production'
 // Template config — switch automatically based on environment
 const TEMPLATE_NAME = IS_PROD ? 'quotations'  : 'hello_world'
 const TEMPLATE_LANG = IS_PROD ? 'en'          : 'en_US'
+
+// Default country code used when phone number has no prefix.
+// Override via env: WHATSAPP_DEFAULT_COUNTRY_CODE=91  (India)
+//                   WHATSAPP_DEFAULT_COUNTRY_CODE=977 (Nepal)
+const DEFAULT_COUNTRY_CODE = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '977'
+
+// ── Phone number normaliser ───────────────────────────────────────────────────
+/**
+ * formatWhatsAppNumber(phone, countryCode?)
+ *
+ * Accepts any of:
+ *   '9845058710'        → '9779845058710'   (10-digit, no prefix)
+ *   '+9779845058710'    → '9779845058710'   (leading + stripped)
+ *   '9779845058710'     → '9779845058710'   (already correct)
+ *   '09845058710'       → '9779845058710'   (leading 0 stripped)
+ *
+ * Returns a string of digits only, ready to pass to the Meta API.
+ */
+export function formatWhatsAppNumber(phone, countryCode = DEFAULT_COUNTRY_CODE) {
+    // Strip everything except digits
+    let cleaned = String(phone).replace(/\D/g, '')
+
+    // Already has the country code prefix → return as-is
+    if (cleaned.startsWith(countryCode)) {
+        return cleaned
+    }
+
+    // Strip a leading 0 (common national-dial format)
+    if (cleaned.startsWith('0')) {
+        cleaned = cleaned.slice(1)
+    }
+
+    return `${countryCode}${cleaned}`
+}
 
 // ── Signature verification ────────────────────────────────────────────────────
 /**
@@ -251,7 +286,7 @@ export function formatReply(results, intent) {
 /**
  * sendWhatsAppMessage(to, text)
  * Sends a plain text message via Meta Cloud API.
- * to: phone number with country code, no +
+ * to: any phone format — country code is auto-prepended if missing.
  */
 export async function sendWhatsAppMessage(to, text) {
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
@@ -259,6 +294,9 @@ export async function sendWhatsAppMessage(to, text) {
     if (!phoneNumberId || !accessToken) {
         throw new Error('WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN must be set')
     }
+
+    const normalised = formatWhatsAppNumber(to)
+    logger.info({ to, normalised }, '[whatsapp] sendWhatsAppMessage')
 
     const res = await fetch(`${META_API_BASE}/${phoneNumberId}/messages`, {
         method:  'POST',
@@ -269,7 +307,7 @@ export async function sendWhatsAppMessage(to, text) {
         body: JSON.stringify({
             messaging_product: 'whatsapp',
             recipient_type:    'individual',
-            to,
+            to: normalised,
             type: 'text',
             text: { body: text },
         }),
@@ -289,7 +327,7 @@ export async function sendWhatsAppMessage(to, text) {
  *   development → 'hello_world' (en_US) — Meta test number only
  *   production  → 'quotations'  (en)    — real registered number
  *
- * to: phone number with country code, no +
+ * to: any phone format — country code is auto-prepended if missing.
  */
 export async function sendQuotationNotification(to) {
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
@@ -298,7 +336,9 @@ export async function sendQuotationNotification(to) {
         throw new Error('WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN must be set')
     }
 
-    logger.info({ to, template: TEMPLATE_NAME, env: process.env.NODE_ENV },
+    const normalised = formatWhatsAppNumber(to)
+
+    logger.info({ to, normalised, template: TEMPLATE_NAME, env: process.env.NODE_ENV },
         '[whatsapp] sending template notification')
 
     const res = await fetch(`${META_API_BASE}/${phoneNumberId}/messages`, {
@@ -310,7 +350,7 @@ export async function sendQuotationNotification(to) {
         body: JSON.stringify({
             messaging_product: 'whatsapp',
             recipient_type:    'individual',
-            to,
+            to: normalised,
             type:     'template',
             template: {
                 name:     TEMPLATE_NAME,
@@ -321,12 +361,12 @@ export async function sendQuotationNotification(to) {
 
     if (!res.ok) {
         const errText = await res.text()
-        logger.error({ errText, to }, '[whatsapp] sendQuotationNotification failed')
+        logger.error({ errText, to: normalised }, '[whatsapp] sendQuotationNotification failed')
         throw new Error(`Meta API error ${res.status}: ${errText}`)
     }
 
     const data = await res.json()
-    logger.info({ to, messageId: data?.messages?.[0]?.id, template: TEMPLATE_NAME },
+    logger.info({ to: normalised, messageId: data?.messages?.[0]?.id, template: TEMPLATE_NAME },
         '[whatsapp] template notification sent')
     return { success: true, data }
 }
@@ -362,7 +402,8 @@ export async function fallbackToSalesperson(to, originalMessage) {
     ).catch(err => logger.error({ err }, '[whatsapp] fallback customer message failed'))
 
     if (notifyNumber && notifyNumber !== to) {
-        const alert = `New WhatsApp enquiry from +${to}:\n"${originalMessage}"\n\nPlease follow up.`
+        const normalised = formatWhatsAppNumber(to)
+        const alert = `New WhatsApp enquiry from +${normalised}:\n"${originalMessage}"\n\nPlease follow up.`
         await sendWhatsAppMessage(notifyNumber, alert)
             .catch(err => logger.error({ err }, '[whatsapp] fallback notify failed'))
     }
