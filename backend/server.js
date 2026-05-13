@@ -32,6 +32,7 @@ import balesRouter      from './routes/bales.js';
 import quotationsRouter from './routes/quotations.js';
 import whatsappRouter   from './routes/whatsapp.js';
 import dealersRouter    from './routes/dealers.js';
+import agentChatRouter  from './routes/agentChat.js';
 
 // ── App ───────────────────────────────────────────────────────────────────
 const app  = express();
@@ -79,6 +80,7 @@ app.use('/api/thans',                  operationsRouter);
 app.use('/api/inventory',              operationsRouter);
 app.use('/api/whatsapp',               whatsappRouter);
 app.use('/api/dealers',                dealersRouter);  // Phase 9
+app.use('/api/agents/user-chat',       agentChatRouter);
 
 // ── Health ──────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));

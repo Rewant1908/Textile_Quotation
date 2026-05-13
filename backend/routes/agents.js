@@ -13,6 +13,7 @@ import { runProcurementFork }  from '../agents/runner/forkRunner.js'
 import { runCoordinator }      from '../agents/runner/coordinatorRunner.js'
 import { AGENT_TOOL_REGISTRY } from '../agents/runner/agentRegistry.js'
 import { runWithTools }        from '../agents/runner/toolRunner.js'
+import { buildDealerTools }    from '../agents/tools/dealerTools.js'
 import { readMemory, writeMemorySnapshot, appendMemory, listMemoryFiles } from '../agents/runner/agentMemory.js'
 import { checkPermission }     from '../middleware/checkPermission.js'
 import { scopeGuardMiddleware } from '../middleware/scopeGuard.js'
@@ -48,10 +49,17 @@ const VALID_AGENTS = [
 //   event: done   data: { response }
 //   event: error  data: { message }
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/chat', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
+router.post('/chat', checkPermission('USE_DEALER_AGENT'), async (req, res) => {
   const { session: sessionId, agent = 'coordinator', message, query, history = [] } = req.body
   const text = (message || query || '').trim()
   if (!text) return res.status(400).json({ error: 'message is required' })
+  const isAdmin = req.user?.role === 'admin'
+  const allowedForDealer = new Set(['dealer', 'inventory', 'retailer', 'quotation-summary'])
+  const requestedAgent = (!isAdmin && agent === 'coordinator') ? 'dealer' : agent
+
+  if (!isAdmin && !allowedForDealer.has(requestedAgent)) {
+    return res.status(403).json({ error: `Forbidden: agent '${requestedAgent}' is not allowed for your role` })
+  }
 
   // SSE headers
   res.setHeader('Content-Type',  'text/event-stream')
@@ -70,7 +78,7 @@ router.post('/chat', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
     const fullHistory   = history.length > 0 ? history : storedHistory
     let   finalResponse
 
-    if (agent === 'coordinator') {
+    if (requestedAgent === 'coordinator') {
       finalResponse = await runCoordinator({
         query: text,
         history: fullHistory,
@@ -79,15 +87,28 @@ router.post('/chat', checkPermission('VIEW_OPERATIONS'), async (req, res) => {
         emit,
       })
     } else {
-      const tools = AGENT_TOOL_REGISTRY[agent]
-      if (!tools) { emit('error', { message: `Unknown agent: ${agent}` }); return res.end() }
-      const mdPath = resolve(__dirname, `../agents/${agent}.agent.md`)
-      let systemPrompt = `You are the ${agent} specialist for KT Impex textile. Use your tools only.`
-      try {
-        const raw = await readFile(mdPath, 'utf-8')
-        const m = raw.match(/^---[\s\S]*?---\n([\s\S]*)$/)
-        if (m) systemPrompt = m[1].trim()
-      } catch (_) {}
+      const tools = requestedAgent === 'dealer'
+        ? buildDealerTools(req.user.user_id)
+        : AGENT_TOOL_REGISTRY[requestedAgent]
+      if (!tools) { emit('error', { message: `Unknown agent: ${requestedAgent}` }); return res.end() }
+
+      let systemPrompt = ''
+      if (requestedAgent === 'dealer') {
+        systemPrompt = [
+          'You are the KT Impex dealer assistant.',
+          'Only use tools provided to answer this dealer user.',
+          'Never return another dealer\'s data.',
+          'Keep replies concise, plain text, and action-oriented.',
+        ].join(' ')
+      } else {
+        const mdPath = resolve(__dirname, `../agents/${requestedAgent}.agent.md`)
+        systemPrompt = `You are the ${requestedAgent} specialist for KT Impex textile. Use your tools only.`
+        try {
+          const raw = await readFile(mdPath, 'utf-8')
+          const m = raw.match(/^---[\s\S]*?---\n([\s\S]*)$/)
+          if (m) systemPrompt = m[1].trim()
+        } catch (_) {}
+      }
       finalResponse = await runWithTools({
         systemPrompt, tools,
         userMessage: text,

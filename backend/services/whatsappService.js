@@ -19,6 +19,9 @@
 
 import { createHmac }   from 'crypto'
 import { runAgent }     from '../agents/runner/agentRunner.js'
+import { runWithTools } from '../agents/runner/toolRunner.js'
+import { buildDealerTools } from '../agents/tools/dealerTools.js'
+import { get as cacheGet, set as cacheSet } from '../cache.js'
 import logger           from '../logger.js'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -35,6 +38,8 @@ const TEMPLATE_LANG = IS_PROD ? 'en'          : 'en_US'
 // Override via env: WHATSAPP_DEFAULT_COUNTRY_CODE=91  (India)
 //                   WHATSAPP_DEFAULT_COUNTRY_CODE=977 (Nepal)
 const DEFAULT_COUNTRY_CODE = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '977'
+const DEALER_SESSION_TTL_SECONDS = 12 * 60 * 60
+const DEALER_SESSION_MAX_MESSAGES = 20
 
 // ── Phone number normaliser ───────────────────────────────────────────────────
 /**
@@ -329,7 +334,7 @@ export async function sendWhatsAppMessage(to, text) {
  *
  * to: any phone format — country code is auto-prepended if missing.
  */
-export async function sendQuotationNotification(to) {
+export async function sendQuotationNotification(to, template = {}) {
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID
     const accessToken   = process.env.WHATSAPP_ACCESS_TOKEN
     if (!phoneNumberId || !accessToken) {
@@ -337,8 +342,21 @@ export async function sendQuotationNotification(to) {
     }
 
     const normalised = formatWhatsAppNumber(to)
+    const body = {
+        messaging_product: 'whatsapp',
+        recipient_type:    'individual',
+        to: normalised,
+        type:     'template',
+        template: {
+            name:     template.name || TEMPLATE_NAME,
+            language: { code: template.language || TEMPLATE_LANG },
+        },
+    }
+    if (Array.isArray(template.components) && template.components.length > 0) {
+        body.template.components = template.components
+    }
 
-    logger.info({ to, normalised, template: TEMPLATE_NAME, env: process.env.NODE_ENV },
+    logger.info({ to, normalised, template: body.template.name, env: process.env.NODE_ENV },
         '[whatsapp] sending template notification')
 
     const res = await fetch(`${META_API_BASE}/${phoneNumberId}/messages`, {
@@ -347,16 +365,7 @@ export async function sendQuotationNotification(to) {
             'Authorization': `Bearer ${accessToken}`,
             'Content-Type':  'application/json',
         },
-        body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            recipient_type:    'individual',
-            to: normalised,
-            type:     'template',
-            template: {
-                name:     TEMPLATE_NAME,
-                language: { code: TEMPLATE_LANG },
-            },
-        }),
+        body: JSON.stringify(body),
     })
 
     if (!res.ok) {
@@ -366,7 +375,7 @@ export async function sendQuotationNotification(to) {
     }
 
     const data = await res.json()
-    logger.info({ to: normalised, messageId: data?.messages?.[0]?.id, template: TEMPLATE_NAME },
+    logger.info({ to: normalised, messageId: data?.messages?.[0]?.id, template: body.template.name },
         '[whatsapp] template notification sent')
     return { success: true, data }
 }
@@ -427,6 +436,59 @@ export async function agentFallback(text, db) {
             .slice(0, 1200)
     } catch (err) {
         logger.error({ err }, '[whatsapp] agentFallback failed')
+        return null
+    }
+}
+
+function dealerSessionKey(phone) {
+    return `whatsapp:dealer:session:${formatWhatsAppNumber(phone)}`
+}
+
+export async function getDealerConversation(phone) {
+    const key = dealerSessionKey(phone)
+    const history = await cacheGet(key)
+    return Array.isArray(history) ? history : []
+}
+
+export async function appendDealerConversation(phone, role, content) {
+    const key = dealerSessionKey(phone)
+    const history = await getDealerConversation(phone)
+    history.push({ role, content: String(content || '') })
+    const trimmed = history.slice(-DEALER_SESSION_MAX_MESSAGES)
+    await cacheSet(key, trimmed, DEALER_SESSION_TTL_SECONDS)
+}
+
+export async function dealerAgentFallback(text, db, { userId, phone, shopName }) {
+    const history = await getDealerConversation(phone)
+    const safeHistory = history
+        .filter(h => h && (h.role === 'user' || h.role === 'assistant') && typeof h.content === 'string')
+        .slice(-DEALER_SESSION_MAX_MESSAGES)
+
+    try {
+        const response = await runWithTools({
+            systemPrompt: [
+                'You are KT Impex WhatsApp assistant for registered dealers.',
+                `Dealer user_id=${userId}. Shop=${shopName || 'unknown'}.`,
+                'Only use tools for this dealer context.',
+                'Never disclose other dealers\' data.',
+                'Keep answers plain text, concise, and practical.',
+            ].join(' '),
+            tools: buildDealerTools(userId),
+            userMessage: text,
+            history: safeHistory,
+            db,
+            emit: () => {},
+        })
+
+        const cleaned = String(response || '')
+            .replace(/[*_~`#]/g, '')
+            .slice(0, 1200)
+
+        await appendDealerConversation(phone, 'user', text)
+        await appendDealerConversation(phone, 'assistant', cleaned)
+        return cleaned
+    } catch (err) {
+        logger.error({ err, userId }, '[whatsapp] dealerAgentFallback failed')
         return null
     }
 }

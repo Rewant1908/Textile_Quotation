@@ -45,6 +45,7 @@ const PERMISSION_ROLES = {
 
     // AI agents
     USE_AGENTS:               ['admin'],
+    USE_DEALER_AGENT:         ['admin', 'dealer', 'user'],
 
     // Issue 1 fix: MANAGE_SYSTEM was used in agents.js but missing here
     // PUT  /api/agents/memory/:scope      — overwrite agent memory

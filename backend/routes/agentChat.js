@@ -1,67 +1,65 @@
 // backend/routes/agentChat.js
-// SSE-streaming endpoint: POST /api/agents/chat
-// Streams step events live, sends 'done' event with final response.
+// Authenticated dealer/admin SSE chat endpoint.
+// Mounted as: POST /api/agents/user-chat
 
-import express                    from 'express'
-import { runCoordinator }         from '../agents/runner/coordinatorRunner.js'
-import { runWithTools }           from '../agents/runner/toolRunner.js'
-import { AGENT_TOOL_REGISTRY }    from '../agents/runner/agentRegistry.js'
-import { getSession, saveSession } from '../agents/runner/sessionStore.js'
-import { readFile }                from 'fs/promises'
-import { resolve, dirname }        from 'path'
-import { fileURLToPath }           from 'url'
-import db                          from '../db.js'
-import logger                      from '../logger.js'
-import { authenticateToken }       from '../middleware/auth.js'
+import express from 'express'
+import { checkPermission } from '../middleware/checkPermission.js'
+import { runCoordinator } from '../agents/runner/coordinatorRunner.js'
+import { runWithTools } from '../agents/runner/toolRunner.js'
+import { buildDealerTools } from '../agents/tools/dealerTools.js'
+import { getHistory, appendToSession } from '../agents/runner/sessionStore.js'
+import { randomUUID } from 'crypto'
+import db from '../db.js'
+import logger from '../logger.js'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname  = dirname(__filename)
 const router = express.Router()
 
-router.post('/', authenticateToken, async (req, res) => {
-  const { session: sessionId, agent = 'coordinator', message, history = [] } = req.body
-  if (!message?.trim()) return res.status(400).json({ error: 'message is required' })
+router.post('/', checkPermission('USE_DEALER_AGENT'), async (req, res) => {
+  const { session: sessionId, message, history = [] } = req.body
+  const text = String(message || '').trim()
+  if (!text) return res.status(400).json({ error: 'message is required' })
 
-  res.setHeader('Content-Type',  'text/event-stream')
+  res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
-  res.setHeader('Connection',    'keep-alive')
+  res.setHeader('Connection', 'keep-alive')
   res.flushHeaders()
 
-  const emit = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  const emit = (event, data) => {
+    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`) } catch (_) {}
+  }
+
+  const sid = sessionId || randomUUID()
 
   try {
-    const stored = await getSession(sessionId)
-    const fullHistory = history.length > 0 ? history : (stored?.history || [])
-    let finalResponse
+    const fullHistory = history.length ? history : getHistory(sid)
+    const isAdmin = req.user?.role === 'admin'
+    let finalResponse = ''
 
-    if (agent === 'coordinator') {
+    if (isAdmin) {
       finalResponse = await runCoordinator({
-        query: message, history: fullHistory, db,
-        sessionId: sessionId || req.user?.username || 'anon', emit
+        query: text,
+        history: fullHistory,
+        db,
+        sessionId: sid,
+        emit,
       })
     } else {
-      const tools = AGENT_TOOL_REGISTRY[agent]
-      if (!tools) { emit('error', { message: `Unknown agent: ${agent}` }); return res.end() }
-      const agentMdPath = resolve(__dirname, `../agents/${agent}.agent.md`)
-      let systemPrompt = `You are the ${agent} specialist for KT Impex textile. Use your tools only.`
-      try {
-        const raw = await readFile(agentMdPath, 'utf-8')
-        const m = raw.match(/^---[\s\S]*?---\n([\s\S]*)$/)
-        if (m) systemPrompt = m[1].trim()
-      } catch (_) {}
-      finalResponse = await runWithTools({ systemPrompt, tools, userMessage: message, history: fullHistory, db, emit })
+      finalResponse = await runWithTools({
+        systemPrompt: 'You are KT Impex dealer assistant. Use only tools. Never reveal another dealer\'s data. Keep answers concise.',
+        tools: buildDealerTools(req.user.user_id),
+        userMessage: text,
+        history: fullHistory,
+        db,
+        emit,
+      })
     }
 
-    await saveSession(sessionId, [
-      ...fullHistory,
-      { role: 'user',      content: message       },
-      { role: 'assistant', content: finalResponse }
-    ])
-
-    emit('done', { response: finalResponse })
+    appendToSession(sid, 'user', text)
+    appendToSession(sid, 'assistant', finalResponse)
+    emit('done', { response: finalResponse, sessionId: sid })
     res.end()
   } catch (err) {
-    logger.error({ err }, 'Agent chat route error')
+    logger.error({ err }, 'agentChat route error')
     emit('error', { message: err.message })
     res.end()
   }

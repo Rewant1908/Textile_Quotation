@@ -30,13 +30,16 @@ import {
     queryInventory,
     confidenceCheck,
     formatReply,
+    formatWhatsAppNumber,
     sendWhatsAppMessage,
     fetchMetaMediaUrl,
     fallbackToSalesperson,
     agentFallback,
+    dealerAgentFallback,
 } from '../services/whatsappService.js'
 
 const router = Router()
+const DEFAULT_COUNTRY_CODE = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '977'
 
 // ── Signature verification helper ────────────────────────────────────────────
 function verifySignature(rawBody, signatureHeader) {
@@ -55,6 +58,56 @@ function verifySignature(rawBody, signatureHeader) {
     let diff = 0
     for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i]
     return diff === 0
+}
+
+function getPhoneCandidates(input) {
+    const raw = String(input || '').replace(/\D/g, '')
+    const normalised = formatWhatsAppNumber(raw, DEFAULT_COUNTRY_CODE)
+    const local = normalised.startsWith(DEFAULT_COUNTRY_CODE)
+        ? normalised.slice(DEFAULT_COUNTRY_CODE.length)
+        : raw.replace(/^0+/, '')
+    const last10 = normalised.slice(-10)
+    return [...new Set([raw, normalised, local, last10].filter(Boolean))]
+}
+
+async function findDealerProfileByWhatsapp(from) {
+    const candidates = getPhoneCandidates(from)
+    if (!candidates.length) return null
+    const placeholders = candidates.map(() => '?').join(', ')
+
+    const attempts = [
+        { expr: 'COALESCE(r.whatsapp_number, r.phone_number, r.phone)' },
+        { expr: 'COALESCE(r.phone_number, r.phone)' },
+        { expr: 'COALESCE(r.phone, r.phone_number)' },
+        { expr: 'r.phone' },
+        { expr: 'r.phone_number' },
+    ]
+
+    let conn
+    try {
+        conn = await pool.getConnection()
+        for (const attempt of attempts) {
+            try {
+                const [row] = await conn.query(
+                    `SELECT r.retailer_id, r.shop_name, r.assigned_user_id AS user_id,
+                            ${attempt.expr} AS source_phone
+                     FROM retailers r
+                     WHERE (r.is_deleted = 0 OR r.is_deleted IS NULL)
+                       AND r.assigned_user_id IS NOT NULL
+                       AND REPLACE(REPLACE(REPLACE(COALESCE(${attempt.expr}, ''), '+', ''), ' ', ''), '-', '')
+                           IN (${placeholders})
+                     LIMIT 1`,
+                    candidates
+                )
+                if (row) return row
+            } catch (err) {
+                if (err.code !== 'ER_BAD_FIELD_ERROR') throw err
+            }
+        }
+        return null
+    } finally {
+        if (conn) conn.release()
+    }
 }
 
 // ── GET /api/whatsapp/webhook — Meta verification handshake ──────────────────
@@ -114,6 +167,38 @@ async function handleInboundAsync(body) {
     if (msg.type === 'text') {
         const text   = msg.text?.body?.trim()
         if (!text) return
+        const dealerProfile = await findDealerProfileByWhatsapp(from)
+
+        if (dealerProfile?.user_id) {
+            logger.info({ from, user_id: dealerProfile.user_id }, '[whatsapp] Dealer message detected')
+            const lower = text.toLowerCase()
+            if (/^(hi|hello|hey|help|menu|start)(\s|$|!)/i.test(lower)) {
+                await sendWhatsAppMessage(from, [
+                    `Hello ${dealerProfile.shop_name || 'Dealer'} 👋`,
+                    '',
+                    'You can ask:',
+                    '• Show my pending orders',
+                    '• Show my receivables',
+                    '• My quotation KPIs',
+                    '• Ageing stock offers',
+                    '• Search red cotton under 180',
+                ].join('\n'))
+                return
+            }
+
+            const dealerReply = await dealerAgentFallback(text, pool, {
+                userId: dealerProfile.user_id,
+                phone: from,
+                shopName: dealerProfile.shop_name,
+            })
+            if (dealerReply) {
+                await sendWhatsAppMessage(from, dealerReply)
+                return
+            }
+
+            await fallbackToSalesperson(from, `[DEALER:${dealerProfile.user_id}] ${text}`)
+            return
+        }
 
         const intent  = parseIntent(text)
         logger.debug({ intent }, '[whatsapp] Parsed intent')
