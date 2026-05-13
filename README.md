@@ -4,9 +4,9 @@
 
 ---
 
-## 1. Project Overview
+## 1. Product Overview
 
-The **KT Impex Textile Quotation & Operations System** is a full-stack web application that manages the complete operational lifecycle of a textile wholesale business — from factory sourcing and bale intake, through inventory breakdown, retailer relationship management, quotation generation, and operations analytics.
+The **KT Impex Textile Quotation & Operations System** is a production-ready platform that manages the end-to-end operational lifecycle of a textile wholesale business — from factory sourcing and inventory intake to sales, retailer management, and analytics.
 
 The system supports two roles: **Admin** (full operations access) and **Dealer** (quotation workflow only).
 
@@ -40,7 +40,7 @@ The system supports two roles: **Admin** (full operations access) and **Dealer**
 - Automatic margin calculation via DB trigger (`trg_transaction_margin_before_insert`)
 - Automatic movement speed tracking via DB trigger (`trg_update_movement_speed_after_stock_out`)
 - Auto stock deduction when a quotation is accepted (`trg_quotation_accepted_stock_deduct`)
-- CORS restricted to local frontend origins
+- CORS restricted to approved frontend origins
 
 ---
 
@@ -56,8 +56,7 @@ The system supports two roles: **Admin** (full operations access) and **Dealer**
 | Cache | Redis (ioredis) |
 | AI | Google Gemini 2.5 Flash |
 | Styling | CSS (App.css + index.css) |
-| Environment | Linux (WSL) |
-| Dev Tool | IntelliJ IDEA / VS Code |
+| Environment | Linux |
 | Version Control | GitHub |
 
 ---
@@ -301,12 +300,10 @@ Open `http://localhost:5173`
 - **Input validation** — email format, phone length, positive quantities enforced
 - **Transaction rollback** — any multi-step operation rolls back fully on failure
 - **Rate limiting** — 500 req / 15 min per IP
-- **CORS** restricted to `localhost:5173` and `localhost:5174`
+- **CORS** restricted to approved frontend origins
 
 ---
 
-## 10. Course Information
+## 10. Ownership & Usage
 
-- **Course**: CSE250 – Database Management Systems
-- **Business**: KT Impex (Textile Import & Export, Birgunj, Nepal)
-- **Database**: `kt_impex` (MariaDB)
+This repository is maintained for KT Impex operational use. If you plan to deploy or extend it, align changes with the production workflow, data retention policies, and role-based access requirements defined above.
