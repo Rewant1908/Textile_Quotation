@@ -1,53 +1,48 @@
 // routes/whatsapp.js — Meta Cloud API WhatsApp webhook
-// Phase 8: WhatsApp AI System
+// Phase 9: Dealer identity resolution wired in
 //
 // Endpoints:
 //   GET  /api/whatsapp/webhook  — Meta verification handshake
 //   POST /api/whatsapp/webhook  — inbound message handler (async pattern)
 //   POST /api/whatsapp/send     — internal programmatic send (admin use)
 //
-// Security:
-//   - GET  uses hub.verify_token (shared secret set in Meta App Dashboard)
-//   - POST uses X-Hub-Signature-256 HMAC-SHA256 verification
-//   - POST returns 200 immediately, processing is async (Meta retries on non-200)
+// Inbound text message flow:
+//   resolveDealer(phone)
+//     → known dealer  : dealerAgentFallback  (personalised, scoped to user_id)
+//     → unknown phone : fmtUnknownDealer()   (onboarding prompt)
+//     → inventory Q   : parseIntent → queryInventory → formatReply (fast path)
 //
-// Flow per inbound text message:
-//   parseIntent → queryInventory → confidenceCheck
-//     → confident  : formatReply → sendWhatsAppMessage
-//     → no_results : agentFallback → if still null → fallbackToSalesperson
-//     → unknown    : fallbackToSalesperson
-//
-// Flow per inbound image message:
-//   fetchMetaMediaUrl → save image_url on matching than (if caption = than_code)
+// Inbound image message flow:
+//   fetchMetaMediaUrl → update thans.image_url by caption=than_code
 
-import { Router }            from 'express'
-import { createHmac }        from 'crypto'
-import { checkPermission }   from '../middleware/checkPermission.js'
-import logger                from '../logger.js'
-import pool                  from '../db.js'
+import { Router }          from 'express'
+import { createHmac }      from 'crypto'
+import { checkPermission } from '../middleware/checkPermission.js'
+import logger              from '../logger.js'
+import pool                from '../db.js'
 import {
     parseIntent,
     queryInventory,
     confidenceCheck,
     formatReply,
-    formatWhatsAppNumber,
     sendWhatsAppMessage,
     fetchMetaMediaUrl,
     fallbackToSalesperson,
     agentFallback,
     dealerAgentFallback,
 } from '../services/whatsappService.js'
+import { resolveDealer }           from '../services/dealerResolver.js'
+import { fmtUnknownDealer }        from '../services/dealerMessageFormatter.js'
 
 const router = Router()
-const DEFAULT_COUNTRY_CODE = process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || '977'
 
-// ── Signature verification helper ────────────────────────────────────────────
+// ── Signature verification ────────────────────────────────────────────────────
 function verifySignature(rawBody, signatureHeader) {
     if (!signatureHeader?.startsWith('sha256=')) return false
     const secret = process.env.WHATSAPP_APP_SECRET
     if (!secret) {
         logger.warn('[whatsapp] WHATSAPP_APP_SECRET not set — skipping signature check (dev mode)')
-        return true  // Allow in dev; enforce in production
+        return true
     }
     const expected = 'sha256=' + createHmac('sha256', secret)
         .update(rawBody)
@@ -60,68 +55,7 @@ function verifySignature(rawBody, signatureHeader) {
     return diff === 0
 }
 
-function getPhoneCandidates(input) {
-    const raw = String(input || '').replace(/\D/g, '')
-    const normalised = formatWhatsAppNumber(raw, DEFAULT_COUNTRY_CODE)
-    const local = normalised.startsWith(DEFAULT_COUNTRY_CODE)
-        ? normalised.slice(DEFAULT_COUNTRY_CODE.length)
-        : raw.replace(/^0+/, '')
-    const last10 = normalised.slice(-10)
-    return [...new Set([raw, normalised, local, last10].filter(Boolean))]
-}
-
-function dbPhoneDigitsExpr(sqlExpr) {
-    return `REPLACE(REPLACE(REPLACE(COALESCE(${sqlExpr}, ''), '+', ''), ' ', ''), '-', '')`
-}
-
-async function findDealerProfileByWhatsapp(from) {
-    const candidates = getPhoneCandidates(from)
-    if (!candidates.length) return null
-    const placeholders = candidates.map(() => '?').join(', ')
-
-    // Backward-compatibility:
-    // Older deployments use different retailer phone column names (phone, phone_number),
-    // and v5 introduces whatsapp_number. We attempt each known schema shape safely.
-    const attempts = [
-        { expr: 'COALESCE(r.whatsapp_number, r.phone_number, r.phone)' },
-        { expr: 'COALESCE(r.phone_number, r.phone)' },
-        { expr: 'COALESCE(r.phone, r.phone_number)' },
-        { expr: 'r.phone' },
-        { expr: 'r.phone_number' },
-    ]
-
-    let conn
-    try {
-        conn = await pool.getConnection()
-        for (const attempt of attempts) {
-            try {
-                const [row] = await conn.query(
-                    `SELECT r.retailer_id, r.shop_name, r.assigned_user_id AS user_id,
-                            ${attempt.expr} AS source_phone
-                     FROM retailers r
-                     WHERE (r.is_deleted = 0 OR r.is_deleted IS NULL)
-                       AND r.assigned_user_id IS NOT NULL
-                       AND ${dbPhoneDigitsExpr(attempt.expr)} IN (${placeholders})
-                     LIMIT 1`,
-                    candidates
-                )
-                if (row) return row
-            } catch (err) {
-                if (err.code !== 'ER_BAD_FIELD_ERROR') {
-                    logger.error({ err, attempt: attempt.expr }, '[whatsapp] dealer lookup query failed')
-                    throw err
-                }
-            }
-        }
-        return null
-    } finally {
-        if (conn) conn.release()
-    }
-}
-
-// ── GET /api/whatsapp/webhook — Meta verification handshake ──────────────────
-// Meta sends: hub.mode=subscribe, hub.verify_token, hub.challenge
-// We must echo back hub.challenge with 200 if verify_token matches.
+// ── GET /api/whatsapp/webhook — Meta verification ────────────────────────────
 router.get('/webhook', (req, res) => {
     const mode      = req.query['hub.mode']
     const token     = req.query['hub.verify_token']
@@ -136,21 +70,15 @@ router.get('/webhook', (req, res) => {
 })
 
 // ── POST /api/whatsapp/webhook — inbound message handler ─────────────────────
-// IMPORTANT: Must return 200 immediately. All processing is async.
-// Meta retries delivery if it receives a non-2xx response.
+// Returns 200 immediately — all processing is async.
 router.post('/webhook', (req, res) => {
-    // Verify signature using raw body buffer attached by server.js
     const sig     = req.headers['x-hub-signature-256']
-    const rawBody = req.rawBody  // attached by the rawBody middleware in server.js
+    const rawBody = req.rawBody
     if (rawBody && !verifySignature(rawBody, sig)) {
         logger.warn('[whatsapp] Invalid signature — rejecting')
         return res.sendStatus(403)
     }
-
-    // Acknowledge immediately
     res.sendStatus(200)
-
-    // Process async — errors must not crash the server
     handleInboundAsync(req.body).catch(err =>
         logger.error({ err }, '[whatsapp] Unhandled async error in handleInboundAsync')
     )
@@ -158,7 +86,6 @@ router.post('/webhook', (req, res) => {
 
 // ── Async inbound handler ─────────────────────────────────────────────────────
 async function handleInboundAsync(body) {
-    // Guard: must be a WhatsApp message webhook
     const entry   = body?.entry?.[0]
     const changes = entry?.changes?.[0]
     if (changes?.field !== 'messages') return
@@ -168,64 +95,46 @@ async function handleInboundAsync(body) {
     if (!messages?.length) return
 
     const msg  = messages[0]
-    const from = msg.from  // Customer phone number, e.g. '977981234567'
+    const from = msg.from
 
-    logger.info({ from, type: msg.type }, '[whatsapp] Inbound message')
+    logger.info({ from, type: msg.type }, '[whatsapp] inbound message')
+
+    // ── Resolve dealer identity first ────────────────────────────────────────
+    const dealer = await resolveDealer(from, pool)
 
     // ── Text message ─────────────────────────────────────────────────────────
     if (msg.type === 'text') {
-        const text   = msg.text?.body?.trim()
+        const text = msg.text?.body?.trim()
         if (!text) return
-        const dealerProfile = await findDealerProfileByWhatsapp(from)
 
-        if (dealerProfile?.user_id) {
-            logger.info({ from, user_id: dealerProfile.user_id }, '[whatsapp] Dealer message detected')
-            const lower = text.toLowerCase()
-            if (/^(hi|hello|hey|help|menu|start)(\s|$|!)/i.test(lower)) {
-                await sendWhatsAppMessage(from, [
-                    `Hello ${dealerProfile.shop_name || 'Dealer'} 👋`,
-                    '',
-                    'You can ask:',
-                    '• Show my pending orders',
-                    '• Show my receivables',
-                    '• My quotation KPIs',
-                    '• Ageing stock offers',
-                    '• Search red cotton under 180',
-                ].join('\n'))
-                return
-            }
-
-            const dealerReply = await dealerAgentFallback(text, pool, {
-                userId: dealerProfile.user_id,
-                phone: from,
-                shopName: dealerProfile.shop_name,
-            })
-            if (dealerReply) {
-                await sendWhatsAppMessage(from, dealerReply)
-                return
-            }
-
-            await fallbackToSalesperson(from, `[DEALER:${dealerProfile.user_id}] ${text}`)
+        // Unknown phone — send onboarding prompt and stop
+        if (!dealer) {
+            logger.info({ from }, '[whatsapp] unknown phone — sending onboarding prompt')
+            await sendWhatsAppMessage(from, fmtUnknownDealer())
             return
         }
 
-        const intent  = parseIntent(text)
-        logger.debug({ intent }, '[whatsapp] Parsed intent')
+        logger.info(
+            { from, user_id: dealer.user_id, role: dealer.role },
+            '[whatsapp] dealer identified'
+        )
 
-        // Image request — look up than by code and send image URL
+        const intent = parseIntent(text)
+        logger.debug({ intent }, '[whatsapp] parsed intent')
+
+        // ── Help message — fast path ──────────────────────────────────────
+        if (intent.intent === 'help') {
+            await sendWhatsAppMessage(from, formatReply([], intent))
+            return
+        }
+
+        // ── Image request — fast path ─────────────────────────────────────
         if (intent.intent === 'image_request') {
             await handleImageRequest(from, intent.than_code)
             return
         }
 
-        // Help message
-        if (intent.intent === 'help') {
-            const reply = formatReply([], intent)
-            await sendWhatsAppMessage(from, reply)
-            return
-        }
-
-        // Inventory search
+        // ── Inventory search — fast path ──────────────────────────────────
         let results = []
         try {
             results = await queryInventory(intent, pool)
@@ -233,22 +142,23 @@ async function handleInboundAsync(body) {
             logger.error({ err }, '[whatsapp] queryInventory failed')
         }
 
-        const { confident, reason } = confidenceCheck(results, intent)
-
+        const { confident } = confidenceCheck(results, intent)
         if (confident) {
-            const reply = formatReply(results, intent)
-            await sendWhatsAppMessage(from, reply)
+            await sendWhatsAppMessage(from, formatReply(results, intent))
             return
         }
 
-        // Not confident — try agent fallback first
-        if (reason === 'no_results' || reason === 'unknown_intent') {
-            logger.info({ from, reason }, '[whatsapp] Low confidence — trying agent fallback')
-            const agentReply = await agentFallback(text, pool)
-            if (agentReply) {
-                await sendWhatsAppMessage(from, agentReply)
-                return
-            }
+        // ── Dealer agent fallback — personalised, scoped to user_id ──────
+        logger.info({ from, user_id: dealer.user_id }, '[whatsapp] routing to dealerAgentFallback')
+        const agentReply = await dealerAgentFallback(text, pool, {
+            userId:   dealer.user_id,
+            phone:    from,
+            shopName: dealer.retailer_name || dealer.full_name || dealer.username,
+        })
+
+        if (agentReply) {
+            await sendWhatsAppMessage(from, agentReply)
+            return
         }
 
         // Final fallback — human salesperson
@@ -256,20 +166,17 @@ async function handleInboundAsync(body) {
     }
 
     // ── Image message — image cataloging pipeline ─────────────────────────────
-    // Customer sends a photo with caption = than_code (e.g. "T-112")
-    // We fetch the image URL from Meta and store it on the than record.
     else if (msg.type === 'image') {
-        const mediaId  = msg.image?.id
-        const caption  = msg.image?.caption?.trim()?.toUpperCase()
+        const mediaId = msg.image?.id
+        const caption = msg.image?.caption?.trim()?.toUpperCase()
         if (!mediaId) return
 
-        logger.info({ from, mediaId, caption }, '[whatsapp] Inbound image')
+        logger.info({ from, mediaId, caption }, '[whatsapp] inbound image')
 
         try {
             const imageUrl = await fetchMetaMediaUrl(mediaId)
 
             if (caption) {
-                // Try to attach to a than by caption = than_code
                 let conn
                 try {
                     conn = await pool.getConnection()
@@ -278,24 +185,23 @@ async function handleInboundAsync(body) {
                         [imageUrl, caption]
                     )
                     const matched = Number(result.affectedRows) > 0
-                    logger.info({ caption, matched }, '[whatsapp] Image cataloged')
-
-                    const reply = matched
-                        ? `Image saved for ${caption}. Thank you!`
-                        : `Image received but than code "${caption}" was not found. Please check the code and resend.`
-                    await sendWhatsAppMessage(from, reply)
+                    logger.info({ caption, matched }, '[whatsapp] image cataloged')
+                    await sendWhatsAppMessage(from,
+                        matched
+                            ? `Image saved for ${caption}. Thank you!`
+                            : `Image received but than code "${caption}" was not found. Please check and resend.`
+                    )
                 } finally {
                     if (conn) conn.release()
                 }
             } else {
                 await sendWhatsAppMessage(from,
-                    'Image received! To attach it to a product, please resend with the than code as the caption (e.g. T-112).'
+                    'Image received! To attach it to a product, resend with the than code as caption (e.g. T-112).'
                 )
             }
         } catch (err) {
-            logger.error({ err }, '[whatsapp] Image cataloging failed')
-            await sendWhatsAppMessage(from, 'Sorry, could not process the image. Please try again.')
-                .catch(() => {})
+            logger.error({ err }, '[whatsapp] image cataloging failed')
+            await sendWhatsAppMessage(from, 'Sorry, could not process the image. Please try again.').catch(() => {})
         }
     }
 }
@@ -323,30 +229,27 @@ async function handleImageRequest(from, thanCode) {
             )
             return
         }
-        // Send details + image URL (WhatsApp will auto-preview https:// URLs)
         await sendWhatsAppMessage(from,
-            `${thanCode} — ${row.fabric_type} ${row.color || ''} ${row.design || ''}\n`.trim() +
+            `${thanCode} — ${[row.fabric_type, row.color, row.design].filter(Boolean).join(' ')}\n` +
             `Rs. ${row.selling_price}/m | ${row.remaining_stock}m available\n\n` +
             `${row.image_url}`
         )
     } catch (err) {
         logger.error({ err }, '[whatsapp] handleImageRequest failed')
-        await sendWhatsAppMessage(from, 'Sorry, could not fetch that image right now.')
-            .catch(() => {})
+        await sendWhatsAppMessage(from, 'Sorry, could not fetch that image right now.').catch(() => {})
     } finally {
         if (conn) conn.release()
     }
 }
 
 // ── POST /api/whatsapp/send — internal programmatic send ─────────────────────
-// Admin-only endpoint. Used for testing or sending proactive messages.
 router.post('/send', checkPermission('MANAGE_SYSTEM'), async (req, res) => {
     const { to, message } = req.body
     if (!to || !message) {
         return res.status(400).json({ error: 'to and message are required' })
     }
     if (!process.env.WHATSAPP_ACCESS_TOKEN || !process.env.WHATSAPP_PHONE_NUMBER_ID) {
-        return res.status(503).json({ error: 'WhatsApp not configured. Set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID.' })
+        return res.status(503).json({ error: 'WhatsApp not configured.' })
     }
     try {
         const result = await sendWhatsAppMessage(to, message)
