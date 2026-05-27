@@ -9,8 +9,9 @@
  *  8. quotations.status lifecycle now matches sales.MEMORY.md:
  *     draft → sent → accepted / declined
  *  8b. WhatsApp notification sent via sendQuotationNotification():
- *     - on POST /  (new quotation created) → notifies customer if contact_phone present
+ *     - on POST /  (new quotation created) → notifies customer + dealer if phones exist
  *     - on PATCH /:id/status → sent        → notifies customer when salesperson marks as sent
+ *     - on PATCH /:id/status → accepted    → notifies dealer when admin approves quote
  *
  * Schema columns (verified + extended):
  *   quotations      : quotation_id, quotation_number, customer_id, user_id, status,
@@ -51,6 +52,16 @@ async function notifyCustomer(phone, logLabel, templateData = null) {
         .catch(err => logger.warn({ err, to }, `[quotations] WhatsApp notification failed (${logLabel}) — non-critical`));
 }
 
+async function notifyDealer(phone, logLabel, templateName, templateData) {
+    if (!phone) return;
+    const to = String(phone).replace(/[\s\-+]/g, '');
+    const template = buildDealerQuoteTemplatePayload(templateName, templateData);
+
+    sendQuotationNotification(to, template)
+        .then(() => logger.info({ to }, `[quotations] Dealer WhatsApp notification sent (${logLabel})`))
+        .catch(err => logger.warn({ err, to }, `[quotations] Dealer WhatsApp notification failed (${logLabel}) — non-critical`));
+}
+
 function buildQuotationTemplateData({ customer_name, quotation_number, total_amount }) {
     return {
         customer_name: String(customer_name || 'Customer'),
@@ -70,6 +81,44 @@ function buildQuotationTemplatePayload(templateData) {
             ]
         }]
     };
+}
+
+function buildDealerQuoteTemplatePayload(templateName, templateData) {
+    return {
+        name: templateName,
+        language: process.env.WHATSAPP_TEMPLATE_LANGUAGE || undefined,
+        components: [{
+            type: 'body',
+            parameters: [
+                { type: 'text', text: String(templateData.dealer_name || 'Dealer') },
+                { type: 'text', text: String(templateData.quotation_number || '') },
+                { type: 'text', text: String(templateData.total_amount ?? '') },
+            ]
+        }]
+    };
+}
+
+async function getDealerNotificationTarget(conn, userId) {
+    if (!userId) return null;
+    try {
+        const [dealer] = await conn.query(
+            `SELECT
+                u.user_id,
+                COALESCE(u.full_name, u.username, r.shop_name, 'Dealer') AS dealer_name,
+                COALESCE(u.whatsapp_phone, u.contact_phone, r.phone_number) AS dealer_phone
+             FROM users u
+             LEFT JOIN retailers r
+                    ON r.assigned_user_id = u.user_id
+                   AND (r.is_deleted = 0 OR r.is_deleted IS NULL)
+             WHERE u.user_id = ?
+             LIMIT 1`,
+            [userId]
+        );
+        return dealer || null;
+    } catch (err) {
+        logger.warn({ err, userId }, '[quotations] dealer WhatsApp lookup failed — non-critical');
+        return null;
+    }
 }
 
 // Helper: COALESCE quotation_number so legacy rows (NULL) always get KTQ-YYYY-XXXXXX format
@@ -219,6 +268,19 @@ router.post('/', checkPermission('CREATE_QUOTATION'), async (req, res) => {
             })
         );
 
+        // ── WhatsApp: notify dealer that their quote has been raised ─────────
+        const dealer = await getDealerNotificationTarget(conn, req.user.user_id);
+        notifyDealer(
+            dealer?.dealer_phone,
+            `POST quotation_id=${quotation_id}`,
+            process.env.WHATSAPP_QUOTE_RAISED_TEMPLATE || 'quote_raised',
+            {
+                dealer_name: dealer?.dealer_name || customer_name.trim(),
+                quotation_number,
+                total_amount: Number(total_amount || 0).toFixed(2),
+            }
+        );
+
         res.status(201).json({ success: true, quotation_id, quotation_number });
     } catch (err) {
         if (conn) await conn.rollback();
@@ -248,10 +310,9 @@ router.patch('/:id/status', checkPermission('MANAGE_QUOTATION_STATUS'), async (r
             [status, decline_reason, req.params.id]
         );
 
-        // ── WhatsApp: notify customer when salesperson marks quotation as 'sent' ──
-        if (status === 'sent') {
+        if (status === 'sent' || status === 'accepted') {
             const [row] = await conn.query(
-                `SELECT c.contact_phone
+                `SELECT q.user_id, c.contact_phone
                  FROM quotations q
                  LEFT JOIN customers c ON c.customer_id = q.customer_id
                  WHERE q.quotation_id = ?`,
@@ -264,13 +325,32 @@ router.patch('/:id/status', checkPermission('MANAGE_QUOTATION_STATUS'), async (r
                  WHERE q.quotation_id = ?`,
                 [req.params.id]
             );
-            notifyCustomer(row?.contact_phone, `PATCH status=sent quotation_id=${req.params.id}`,
-                buildQuotationTemplateData({
+
+            const templateData = buildQuotationTemplateData({
                     customer_name: quotationMeta?.customer_name || 'Customer',
                     quotation_number: quotationMeta?.quotation_number || `#${req.params.id}`,
                     total_amount: quotationMeta?.total_amount || 0,
-                })
-            );
+            });
+
+            // ── WhatsApp: notify customer when salesperson marks quotation as 'sent' ──
+            if (status === 'sent') {
+                notifyCustomer(row?.contact_phone, `PATCH status=sent quotation_id=${req.params.id}`, templateData);
+            }
+
+            // ── WhatsApp: notify dealer when admin accepts/approves quotation ──
+            if (status === 'accepted') {
+                const dealer = await getDealerNotificationTarget(conn, row?.user_id);
+                notifyDealer(
+                    dealer?.dealer_phone,
+                    `PATCH status=accepted quotation_id=${req.params.id}`,
+                    process.env.WHATSAPP_QUOTE_APPROVED_TEMPLATE || 'quote_approved',
+                    {
+                        dealer_name: dealer?.dealer_name || templateData.customer_name,
+                        quotation_number: templateData.quotation_number,
+                        total_amount: templateData.total_amount,
+                    }
+                );
+            }
         }
 
         res.json({ success: true, status });

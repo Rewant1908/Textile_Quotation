@@ -79,6 +79,7 @@ app.use('/api/operations',             operationsRouter);
 app.use('/api/thans',                  operationsRouter);
 app.use('/api/inventory',              operationsRouter);
 app.use('/api/whatsapp',               whatsappRouter);
+app.use('/webhooks/whatsapp',          whatsappRouter);
 app.use('/api/dealers',                dealersRouter);  // Phase 9
 app.use('/api/agents/user-chat',       agentChatRouter);
 

@@ -5,7 +5,7 @@
 //
 // Strategy:
 //   1. Normalise the phone number (strip +, spaces, country code variants)
-//   2. Look up users table by whatsapp_phone (last-10-digit suffix match)
+//   2. Look up users/retailers by registered phone (last-10-digit suffix match)
 //   3. Cache result in Redis for 10 minutes to avoid repeated DB lookups
 //   4. If not found → return null (caller sends onboarding prompt)
 //
@@ -64,7 +64,7 @@ export async function resolveDealer(phone, db = pool) {
     try {
         conn = await db.getConnection()
 
-        // Match on last 10 digits of whatsapp_phone stored in DB
+        // Match on last 10 digits to tolerate country-code / local phone variants.
         const suffix = cleaned.slice(-10)
 
         const rows = await conn.query(
@@ -78,18 +78,19 @@ export async function resolveDealer(phone, db = pool) {
                 u.contact_phone,
                 u.is_active,
                 r.retailer_id,
-                r.retailer_name
+                r.shop_name AS retailer_name
              FROM users u
              LEFT JOIN retailers r
                     ON r.assigned_user_id = u.user_id
                    AND r.is_deleted = 0
              WHERE u.is_active = 1
-               AND RIGHT(
-                       REPLACE(REPLACE(REPLACE(COALESCE(u.whatsapp_phone,''),'+',''),'-',''),' ',''),
-                       10
-                   ) = ?
+               AND (
+                    RIGHT(REPLACE(REPLACE(REPLACE(COALESCE(u.whatsapp_phone,''),'+',''),'-',''),' ',''), 10) = ?
+                 OR RIGHT(REPLACE(REPLACE(REPLACE(COALESCE(u.contact_phone,''),'+',''),'-',''),' ',''), 10) = ?
+                 OR RIGHT(REPLACE(REPLACE(REPLACE(COALESCE(r.phone_number,''),'+',''),'-',''),' ',''), 10) = ?
+               )
              LIMIT 1`,
-            [suffix]
+            [suffix, suffix, suffix]
         )
 
         const dealer = rows?.[0] ?? null

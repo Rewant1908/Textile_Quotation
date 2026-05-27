@@ -155,7 +155,12 @@ export function fmtStockOffers(rows) {
         const tag = r.movement_speed === 'dead' ? '🔴 CLEARANCE' : '🟡 SLOW MOVER'
         lines.push(`${tag} — ${r.than_code}`)
         lines.push(`   ${[r.fabric_type, r.color, r.design].filter(Boolean).join(' ')}`)
-        lines.push(`   Price : ${Rs(r.selling_price)}/m | Stock: ${r.remaining_stock}m`)
+        if (r.offer_price && Number(r.offer_price) < Number(r.selling_price)) {
+            lines.push(`   Offer : ${Rs(r.offer_price)}/m (${r.discount_pct}% off)`)
+            lines.push(`   Was   : ${Rs(r.selling_price)}/m | Stock: ${r.remaining_stock}m`)
+        } else {
+            lines.push(`   Price : ${Rs(r.selling_price)}/m | Stock: ${r.remaining_stock}m`)
+        }
         if (r.image_url) lines.push(`   Photo : ${r.image_url}`)
         lines.push('')
     }
