@@ -1,210 +1,173 @@
 // backend/agents/tools/transactionTools.js
-// Schema aligned to sales.js route (verified):
+// Real DB schema for transactions:
 //   TABLE: transactions
-//     transaction_id, than_id, product_id, retailer_id, transaction_date,
-//     quantity, price, discount, margin, payment_status, notes
-//   TABLE: thans
-//     than_id, remaining_stock, cost_per_meter, warehouse_location, product_id
-//   TABLE: retailers
-//     retailer_id, shop_name, market_location, outstanding_balance
-//   TABLE: inventory_movements
-//     than_id, movement_type, quantity, from_location, to_location,
-//     reference_type, reference_id, notes, movement_date
-
-const DEAD_DAYS = 60
-
-async function refreshMovementSpeed(db, thanId) {
-  const than = (await db.query(
-    `SELECT remaining_stock FROM thans WHERE than_id = ?`, [thanId]
-  ))[0]
-  if (!than) return
-
-  const lastOut = (await db.query(
-    `SELECT MAX(movement_date) AS last_out
-     FROM inventory_movements
-     WHERE than_id = ? AND movement_type = 'stock_out'`, [thanId]
-  ))[0]
-
-  const remaining = Number(than.remaining_stock)
-
-  if (remaining <= 0) {
-    await db.query(
-      `UPDATE thans SET movement_speed = 'fast', status = 'sold_out' WHERE than_id = ?`, [thanId]
-    )
-    return
-  }
-
-  if (!lastOut?.last_out) {
-    await db.query(`UPDATE thans SET movement_speed = 'new' WHERE than_id = ?`, [thanId])
-    return
-  }
-
-  const daysSince = Math.floor((Date.now() - new Date(lastOut.last_out).getTime()) / 86_400_000)
-  let speed
-  if (daysSince >= DEAD_DAYS) speed = 'dead'
-  else if (daysSince >= 30)   speed = 'slow'
-  else if (daysSince >= 8)    speed = 'medium'
-  else                        speed = 'fast'
-
-  await db.query(`UPDATE thans SET movement_speed = ? WHERE than_id = ?`, [speed, thanId])
-}
+//     transaction_id, retailer_id, than_id, price, quantity,
+//     margin, payment_method, discount, created_at
+//
+// NULL SAFETY: All optional params use anyOf:[type, null].
 
 export const transactionTools = [
   {
-    name: 'list_transactions',
-    description: 'List recent sale transactions. Use when user asks for sales history, recent sales, or transaction records.',
-    parameters: { type: 'object', properties: {
-      limit:       { type: 'number', description: 'Max results. Default 50.' },
-      retailer_id: { type: 'number', description: 'Filter by retailer ID (optional).' },
-      than_id:     { type: 'number', description: 'Filter by than ID (optional).' }
-    }, required: [] },
+    name: 'get_recent_transactions',
+    description:
+      'Returns recent sales transactions. Optionally filter by retailer or than. ' +
+      'Use when asked about recent sales, what was sold, or transaction history.',
+    parameters: {
+      type: 'object',
+      properties: {
+        retailer_id: {
+          anyOf: [{ type: 'number' }, { type: 'null' }],
+          description: 'Filter by retailer. Pass null to get all retailers.'
+        },
+        than_id: {
+          anyOf: [{ type: 'number' }, { type: 'null' }],
+          description: 'Filter by specific than/bale. Pass null for all.'
+        },
+        limit: {
+          anyOf: [{ type: 'number' }, { type: 'null' }],
+          description: 'Max records. Default 20.'
+        }
+      },
+      required: []
+    },
     execute: async (args, db) => {
-      const limit = args.limit ?? 50
-      let where = 'WHERE 1=1'
+      const limit = (args.limit != null) ? args.limit : 20
+      const where = []
       const params = []
-      if (args.retailer_id) { where += ' AND tx.retailer_id = ?'; params.push(args.retailer_id) }
-      if (args.than_id)     { where += ' AND tx.than_id = ?';     params.push(args.than_id) }
+      if (args.retailer_id != null) { where.push('tx.retailer_id = ?'); params.push(args.retailer_id) }
+      if (args.than_id     != null) { where.push('tx.than_id = ?');     params.push(args.than_id)     }
+      const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : ''
       params.push(limit)
       const rows = await db.query(
-        `SELECT tx.transaction_id, tx.than_id, tx.retailer_id, tx.product_id,
-                tx.transaction_date AS sale_date,
-                tx.quantity, tx.price, tx.discount, tx.margin,
-                tx.payment_status, tx.notes,
-                t.than_code, t.fabric_type, t.color, t.design,
-                p.product_name, p.category,
-                r.shop_name, r.market_location
+        `SELECT tx.transaction_id, tx.price, tx.quantity, tx.margin,
+                tx.payment_method, tx.discount, tx.created_at,
+                r.shop_name, r.market_location,
+                t.fabric_type, t.color, t.design,
+                p.product_name, p.category
          FROM transactions tx
-         LEFT JOIN thans    t  ON tx.than_id     = t.than_id
-         LEFT JOIN products p  ON tx.product_id  = p.product_id
-         LEFT JOIN retailers r ON tx.retailer_id = r.retailer_id
-         ${where}
-         ORDER BY tx.transaction_date DESC, tx.transaction_id DESC
-         LIMIT ?`, params
+         JOIN retailers r ON r.retailer_id = tx.retailer_id
+         JOIN thans t     ON t.than_id     = tx.than_id
+         JOIN products p  ON p.product_id  = t.product_id
+         ${whereClause}
+         ORDER BY tx.created_at DESC
+         LIMIT ?`,
+        params
       )
       return { transactions: rows, count: rows.length }
     }
   },
 
   {
-    name: 'record_sale',
-    description: 'Record a new sale/transaction. Deducts stock from the than and logs an inventory movement. Use when user says sell, record a sale, or sold X meters of than Y. than_id, quantity, and price are required.',
-    parameters: { type: 'object', properties: {
-      than_id:        { type: 'number', description: 'Than ID being sold. Required.' },
-      quantity:       { type: 'number', description: 'Meters sold. Required.' },
-      price:          { type: 'number', description: 'Price per meter in Rs. Required.' },
-      retailer_id:    { type: 'number', description: 'Retailer ID (optional, use null for walk-in).' },
-      discount:       { type: 'number', description: 'Flat discount in Rs. Default 0.' },
-      payment_status: { type: 'string', description: "Payment status: 'paid', 'credit', 'partial'. Default paid." },
-      notes:          { type: 'string', description: 'Optional sale notes.' },
-      sale_date:      { type: 'string', description: 'Date of sale YYYY-MM-DD. Default today.' }
-    }, required: ['than_id', 'quantity', 'price'] },
+    name: 'get_outstanding_balances',
+    description:
+      'Returns retailers with outstanding (unpaid) balances, sorted by amount descending. ' +
+      'Use when asked about overdue payments, who owes money, or receivables.',
+    parameters: {
+      type: 'object',
+      properties: {
+        min_balance: {
+          anyOf: [{ type: 'number' }, { type: 'null' }],
+          description: 'Minimum outstanding_balance to include. Default 1.'
+        }
+      },
+      required: []
+    },
     execute: async (args, db) => {
-      if (!args.than_id || !args.quantity || !args.price)
-        return { error: 'than_id, quantity and price are required' }
-      if (Number(args.quantity) <= 0) return { error: 'quantity must be > 0' }
-      if (Number(args.price) <= 0)    return { error: 'price must be > 0' }
-
-      const thans = await db.query(
-        `SELECT than_id, remaining_stock, cost_per_meter, warehouse_location, product_id
-         FROM thans WHERE than_id = ?`, [args.than_id]
+      const min = (args.min_balance != null) ? args.min_balance : 1
+      const rows = await db.query(
+        `SELECT r.retailer_id, r.shop_name, r.market_location,
+                r.outstanding_balance, r.payment_pattern
+         FROM retailers r
+         WHERE r.outstanding_balance >= ? AND r.is_deleted = 0
+         ORDER BY r.outstanding_balance DESC
+         LIMIT 50`,
+        [min]
       )
-      const than = thans[0]
-      if (!than) return { error: `Than #${args.than_id} not found` }
-      if (Number(than.remaining_stock) < Number(args.quantity))
-        return { error: `Only ${than.remaining_stock}m available, cannot sell ${args.quantity}m` }
+      const total = rows.reduce((s, r) => s + Number(r.outstanding_balance), 0)
+      return { retailers_with_dues: rows, count: rows.length, total_outstanding: total }
+    }
+  },
 
-      const disc    = Number(args.discount || 0)
-      const margin  = (Number(args.price) - Number(than.cost_per_meter)) * Number(args.quantity) - disc
-      const pStatus = args.payment_status || 'paid'
-      const txDate  = args.sale_date || new Date().toISOString().slice(0, 10)
-
-      const result = await db.query(
-        `INSERT INTO transactions
-           (than_id, product_id, retailer_id, transaction_date,
-            quantity, price, discount, margin, payment_status, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          args.than_id,
-          than.product_id  || null,
-          args.retailer_id || null,
-          txDate,
-          Number(args.quantity),
-          Number(args.price),
-          disc,
-          margin,
-          pStatus,
-          args.notes?.trim() || null
-        ]
+  {
+    name: 'record_payment',
+    description:
+      'Record a payment received from a retailer (reduces outstanding_balance). ' +
+      'Use when user says retailer paid, record payment, or settle balance.',
+    parameters: {
+      type: 'object',
+      properties: {
+        retailer_id:    { type: 'number' },
+        amount:         { type: 'number' },
+        payment_method: {
+          anyOf: [{ type: 'string' }, { type: 'null' }],
+          description: 'cash | upi | bank_transfer | cheque. Default cash.'
+        },
+        notes: {
+          anyOf: [{ type: 'string' }, { type: 'null' }],
+          description: 'Optional payment notes.'
+        }
+      },
+      required: ['retailer_id', 'amount']
+    },
+    execute: async (args, db) => {
+      const [retailer] = await db.query(
+        'SELECT retailer_id, shop_name, outstanding_balance FROM retailers WHERE retailer_id = ? AND is_deleted = 0',
+        [args.retailer_id]
       )
-
+      if (!retailer) return { error: `Retailer #${args.retailer_id} not found.` }
+      const newBalance = Math.max(0, Number(retailer.outstanding_balance) - Number(args.amount))
       await db.query(
-        `UPDATE thans SET remaining_stock = remaining_stock - ? WHERE than_id = ?`,
-        [Number(args.quantity), args.than_id]
+        'UPDATE retailers SET outstanding_balance = ? WHERE retailer_id = ?',
+        [newBalance, args.retailer_id]
       )
-
-      await db.query(
-        `INSERT INTO inventory_movements
-           (than_id, movement_type, quantity, from_location, to_location,
-            reference_type, reference_id, notes, movement_date)
-         VALUES (?, 'stock_out', ?, ?, NULL, 'transaction', ?, ?, current_timestamp())`,
-        [
-          args.than_id,
-          Number(args.quantity),
-          than.warehouse_location || null,
-          Number(result.insertId),
-          `Sale to retailer ${args.retailer_id || 'walk-in'}`
-        ]
-      )
-
-      await refreshMovementSpeed(db, args.than_id)
-
-      if (args.retailer_id && pStatus !== 'paid') {
-        const saleTotal = Number(args.price) * Number(args.quantity) - disc
-        await db.query(
-          `UPDATE retailers SET outstanding_balance = outstanding_balance + ? WHERE retailer_id = ?`,
-          [saleTotal, args.retailer_id]
-        )
-      }
-
       return {
         success: true,
-        transaction_id: Number(result.insertId),
-        margin,
-        message: `Sale recorded — ${args.quantity}m of than #${args.than_id} at Rs.${args.price}/m. Margin: Rs.${margin.toFixed(2)}.`
+        retailer_id: args.retailer_id,
+        shop_name: retailer.shop_name,
+        amount_received: args.amount,
+        old_balance: Number(retailer.outstanding_balance),
+        new_balance: newBalance
       }
     }
   },
 
   {
-    // Renamed from get_sales_summary → get_transaction_summary to avoid clash with salesTools.js
-    name: 'get_transaction_summary',
-    description: 'Get aggregated transaction stats by than: total revenue, margin, top selling thans over N days. Use when user asks for than-level sales breakdown, stock movement revenue, or top thans by meters sold.',
-    parameters: { type: 'object', properties: {
-      days: { type: 'number', description: 'Look-back window in days. Default 30.' }
-    }, required: [] },
+    name: 'get_margin_analysis',
+    description:
+      'Returns margin analysis grouped by product category over a time period. ' +
+      'Use when asked about profitability, margins, or which products make more money.',
+    parameters: {
+      type: 'object',
+      properties: {
+        days: {
+          anyOf: [{ type: 'number' }, { type: 'null' }],
+          description: 'Look-back window in days. Default 30.'
+        }
+      },
+      required: []
+    },
     execute: async (args, db) => {
-      const days = args.days ?? 30
+      const days = (args.days != null) ? args.days : 30
       const rows = await db.query(
-        `SELECT
-           COUNT(*)                                              AS total_transactions,
-           COALESCE(SUM(quantity * price - discount), 0)        AS total_revenue,
-           COALESCE(SUM(margin), 0)                             AS total_margin,
-           COALESCE(SUM(quantity), 0)                           AS total_meters_sold
-         FROM transactions
-         WHERE transaction_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`, [days]
-      )
-      const topThans = await db.query(
-        `SELECT tx.than_id, t.than_code, t.fabric_type,
-                SUM(tx.quantity)                             AS total_meters,
-                SUM(tx.quantity * tx.price - tx.discount)   AS revenue
+        `SELECT p.category,
+                COUNT(tx.transaction_id)               AS transactions,
+                SUM(tx.quantity)                       AS units_sold,
+                ROUND(SUM(tx.price * tx.quantity), 2)  AS revenue,
+                ROUND(SUM(tx.margin * tx.quantity), 2) AS total_margin,
+                ROUND(AVG(tx.margin), 2)               AS avg_margin_per_m,
+                ROUND(
+                  100 * SUM(tx.margin * tx.quantity) /
+                  NULLIF(SUM(tx.price * tx.quantity), 0)
+                , 1)                                   AS margin_pct
          FROM transactions tx
-         LEFT JOIN thans t ON tx.than_id = t.than_id
-         WHERE tx.transaction_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-         GROUP BY tx.than_id, t.than_code, t.fabric_type
-         ORDER BY total_meters DESC
-         LIMIT 5`, [days]
+         JOIN thans t    ON t.than_id    = tx.than_id
+         JOIN products p ON p.product_id = t.product_id
+         WHERE tx.created_at >= NOW() - INTERVAL ? DAY
+         GROUP BY p.category
+         ORDER BY total_margin DESC`,
+        [days]
       )
-      return { summary: rows[0], top_thans: topThans, period_days: days }
+      return { margin_analysis: rows, period_days: days }
     }
   }
 ]

@@ -10,18 +10,27 @@
 //     cost_per_meter, selling_price, remaining_stock,
 //     movement_speed, status, warehouse_location, updated_at
 //   NO: than_name, total_quantity, purchase_price_per_unit, sale_price_per_unit
+//
+// NULL SAFETY: Claude passes explicit null for optional params it doesn't need.
+// All optional params use anyOf:[type, null] so the API validator accepts null.
 
 export const productTools = [
   {
     name: 'list_products',
-    description: 'List all products with optional category filter.',
+    description: 'List all products with optional category filter. Pass a category string to filter, or omit/null to list all.',
     parameters: { type: 'object', properties: {
-      category: { type: 'string', description: 'Optional category to filter by.' },
-      limit:    { type: 'number', description: 'Max results. Default 30.' }
+      category: {
+        anyOf: [{ type: 'string' }, { type: 'null' }],
+        description: 'Optional category to filter by. Pass null or omit to list all products.'
+      },
+      limit: {
+        anyOf: [{ type: 'number' }, { type: 'null' }],
+        description: 'Max results. Default 30.'
+      }
     }, required: [] },
     execute: async (args, db) => {
-      const limit = args.limit ?? 30
-      const rows = args.category
+      const limit = (args.limit != null) ? args.limit : 30
+      const rows = (args.category && typeof args.category === 'string')
         ? await db.query(
             `SELECT product_id, product_name, category, base_price
              FROM products WHERE category = ? ORDER BY product_name LIMIT ?`,
@@ -63,9 +72,9 @@ export const productTools = [
     description: 'Update product details like price or category.',
     parameters: { type: 'object', properties: {
       product_id:   { type: 'number' },
-      product_name: { type: 'string' },
-      base_price:   { type: 'number' },
-      category:     { type: 'string' }
+      product_name: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+      base_price:   { anyOf: [{ type: 'number' }, { type: 'null' }] },
+      category:     { anyOf: [{ type: 'string' }, { type: 'null' }] }
     }, required: ['product_id'] },
     execute: async (args, db) => {
       const fields = []; const vals = []
@@ -87,7 +96,7 @@ export const productTools = [
     parameters: { type: 'object', properties: {
       than_id:   { type: 'number' },
       new_stock: { type: 'number' },
-      reason:    { type: 'string' }
+      reason:    { anyOf: [{ type: 'string' }, { type: 'null' }] }
     }, required: ['than_id', 'new_stock'] },
     execute: async (args, db) => {
       const rows = await db.query(

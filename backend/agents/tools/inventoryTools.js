@@ -9,6 +9,8 @@
 //
 //   TABLE: inventory_movements
 //     movement_id, than_id, movement_type, quantity, notes, movement_date
+//
+// NULL SAFETY: All optional params use anyOf:[type, null].
 
 export const inventoryTools = [
   {
@@ -19,12 +21,15 @@ export const inventoryTools = [
     parameters: {
       type: 'object',
       properties: {
-        threshold: { type: 'number', description: 'Min remaining_stock to flag. Default 10.' }
+        threshold: {
+          anyOf: [{ type: 'number' }, { type: 'null' }],
+          description: 'Min remaining_stock to flag. Default 10.'
+        }
       },
       required: [],
     },
     execute: async (args, db) => {
-      const threshold = args.threshold ?? 10
+      const threshold = (args.threshold != null) ? args.threshold : 10
       const rows = await db.query(
         `SELECT t.than_id, t.fabric_type, t.color, t.design,
                 t.remaining_stock, t.status, t.movement_speed,
@@ -44,10 +49,27 @@ export const inventoryTools = [
   {
     name: 'get_dead_stock_items',
     description:
-      'Returns thans classified as dead stock (movement_speed = dead). ' +
-      'Use when the user asks about slow-moving inventory, dead stock, or liquidation candidates.',
-    parameters: { type: 'object', properties: {}, required: [] },
-    execute: async (_args, db) => {
+      'Returns thans classified as dead stock (movement_speed = dead) OR slow moving stock (movement_speed = slow). ' +
+      'Use when the user asks about slow-moving inventory, dead stock, liquidation candidates, or aging stock.',
+    parameters: {
+      type: 'object',
+      properties: {
+        movement_speed: {
+          anyOf: [
+            { type: 'string', enum: ['dead', 'slow', 'both'] },
+            { type: 'null' }
+          ],
+          description: 'Filter by movement speed: dead, slow, or both. Default is both.'
+        }
+      },
+      required: []
+    },
+    execute: async (args, db) => {
+      const speed = args.movement_speed || 'both'
+      let speedCondition = `t.movement_speed IN ('dead', 'slow')`
+      if (speed === 'dead') speedCondition = `t.movement_speed = 'dead'`
+      if (speed === 'slow') speedCondition = `t.movement_speed = 'slow'`
+
       const rows = await db.query(
         `SELECT t.than_id, t.fabric_type, t.color, t.design,
                 t.remaining_stock, t.movement_speed, t.status,
@@ -56,12 +78,14 @@ export const inventoryTools = [
                 DATEDIFF(NOW(), t.updated_at) AS days_idle
          FROM   thans t
          JOIN   products p ON p.product_id = t.product_id
-         WHERE  t.movement_speed = 'dead'
+         WHERE  ${speedCondition}
            AND  t.remaining_stock > 0
-         ORDER  BY days_idle DESC
+         ORDER  BY
+           CASE t.movement_speed WHEN 'dead' THEN 0 ELSE 1 END,
+           days_idle DESC
          LIMIT  50`
       )
-      return { dead_stock_items: rows, count: rows.length }
+      return { dead_stock_items: rows, count: rows.length, filter: speed }
     },
   },
 
@@ -129,14 +153,20 @@ export const inventoryTools = [
     parameters: {
       type: 'object',
       properties: {
-        than_id: { type: 'number', description: 'Optional than ID to filter movements for a single bale.' },
-        limit:   { type: 'number', description: 'Max records to return. Default 20.' }
+        than_id: {
+          anyOf: [{ type: 'number' }, { type: 'null' }],
+          description: 'Optional than ID to filter movements for a single bale. Pass null for all.'
+        },
+        limit: {
+          anyOf: [{ type: 'number' }, { type: 'null' }],
+          description: 'Max records to return. Default 20.'
+        }
       },
       required: [],
     },
     execute: async (args, db) => {
-      const limit = args.limit ?? 20
-      if (args.than_id) {
+      const limit = (args.limit != null) ? args.limit : 20
+      if (args.than_id != null) {
         const rows = await db.query(
           `SELECT im.movement_id, im.movement_type, im.quantity, im.movement_date,
                   im.notes, t.fabric_type, t.color, p.product_name

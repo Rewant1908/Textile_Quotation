@@ -1,156 +1,151 @@
 // backend/agents/tools/quotationTools.js
-// Aligned to real DB schema (verified from migration + quotations.js route):
-//
-//   TABLE: quotations
-//     quotation_id, quotation_number, customer_id, user_id,
-//     status, total_amount, decline_reason, created_at, updated_at
-//   STATUS ENUM: 'draft' | 'sent' | 'accepted' | 'declined'
-//     ('pending' treated as alias for 'draft' in agent context)
-//
-//   TABLE: customers
-//     customer_id, customer_name, contact_phone, email
-//
-//   NO discount_percentage column.
-//   NO notes column (use decline_reason for rejections).
-//   NO retailers join on quotations (quotations use customer_id → customers).
+// NULL SAFETY: All optional params use anyOf:[type, null].
 
 export const quotationTools = [
   {
-    name: 'list_pending_quotations',
-    description: 'List all quotations with status draft, pending, or sent (i.e. not yet accepted or declined). Use when user asks to see pending quotations, open requests, or what needs approval.',
-    parameters: { type: 'object', properties: {
-      limit: { type: 'number', description: 'Max results. Default 20.' }
-    }, required: [] },
+    name: 'list_quotations',
+    description:
+      'List quotations with optional status filter. ' +
+      'Status values: draft | sent | accepted | declined. ' +
+      'Use when asked to show quotations, recent quotes, or pending quotes.',
+    parameters: {
+      type: 'object',
+      properties: {
+        status: {
+          anyOf: [
+            { type: 'string', enum: ['draft', 'sent', 'accepted', 'declined'] },
+            { type: 'null' }
+          ],
+          description: 'Filter by status. Pass null to list all statuses.'
+        },
+        limit: {
+          anyOf: [{ type: 'number' }, { type: 'null' }],
+          description: 'Max results. Default 20.'
+        }
+      },
+      required: []
+    },
     execute: async (args, db) => {
-      const limit = args.limit ?? 20
-      const rows = await db.query(
-        `SELECT q.quotation_id,
-                q.quotation_number,
-                q.status,
-                q.total_amount,
-                q.created_at,
-                q.updated_at,
-                c.customer_name,
-                c.contact_phone
-         FROM   quotations q
-         LEFT JOIN customers c ON c.customer_id = q.customer_id
-         WHERE  q.status IN ('draft', 'pending', 'sent')
-         ORDER  BY q.created_at ASC
-         LIMIT  ?`, [limit]
-      )
-      return { pending_quotations: rows, count: rows.length }
+      const limit = (args.limit != null) ? args.limit : 20
+      const rows = (args.status && typeof args.status === 'string')
+        ? await db.query(
+            `SELECT q.quotation_id,
+                    COALESCE(q.quotation_number,
+                      CONCAT('KTQ-', YEAR(q.created_at), '-', LPAD(q.quotation_id,6,'0'))
+                    ) AS quotation_number,
+                    c.customer_name, q.total_amount, q.status, q.created_at
+             FROM quotations q
+             LEFT JOIN customers c ON c.customer_id = q.customer_id
+             WHERE q.status = ?
+             ORDER BY q.created_at DESC LIMIT ?`,
+            [args.status, limit]
+          )
+        : await db.query(
+            `SELECT q.quotation_id,
+                    COALESCE(q.quotation_number,
+                      CONCAT('KTQ-', YEAR(q.created_at), '-', LPAD(q.quotation_id,6,'0'))
+                    ) AS quotation_number,
+                    c.customer_name, q.total_amount, q.status, q.created_at
+             FROM quotations q
+             LEFT JOIN customers c ON c.customer_id = q.customer_id
+             ORDER BY q.created_at DESC LIMIT ?`,
+            [limit]
+          )
+      return { quotations: rows, count: rows.length }
     }
   },
 
   {
-    name: 'get_quotation_details',
-    description: 'Get full details of a specific quotation by its ID. Use before accepting or rejecting.',
-    parameters: { type: 'object', properties: {
-      quotation_id: { type: 'number', description: 'The quotation ID.' }
-    }, required: ['quotation_id'] },
+    name: 'get_quotation_detail',
+    description: 'Get full details of a specific quotation including all line items.',
+    parameters: {
+      type: 'object',
+      properties: {
+        quotation_id: { type: 'number', description: 'The quotation_id to look up.' }
+      },
+      required: ['quotation_id']
+    },
     execute: async (args, db) => {
-      const rows = await db.query(
-        `SELECT q.quotation_id,
-                q.quotation_number,
-                q.status,
-                q.total_amount,
-                q.decline_reason,
-                q.created_at,
-                q.updated_at,
-                c.customer_name,
-                c.contact_phone
-         FROM   quotations q
+      const [q] = await db.query(
+        `SELECT q.*,
+                COALESCE(q.quotation_number,
+                  CONCAT('KTQ-', YEAR(q.created_at), '-', LPAD(q.quotation_id,6,'0'))
+                ) AS quotation_number,
+                c.customer_name, c.phone AS customer_phone
+         FROM quotations q
          LEFT JOIN customers c ON c.customer_id = q.customer_id
-         WHERE  q.quotation_id = ?`, [args.quotation_id]
-      )
-      const q = rows[0]
-      if (!q) return { error: `Quotation #${args.quotation_id} not found` }
-      return { quotation: q }
-    }
-  },
-
-  {
-    name: 'accept_quotation',
-    description: 'Accept a quotation and set its status to accepted. Use when user says accept, approve, or confirm a quotation.',
-    parameters: { type: 'object', properties: {
-      quotation_id: { type: 'number', description: 'Quotation ID to accept.' }
-    }, required: ['quotation_id'] },
-    execute: async (args, db) => {
-      const rows = await db.query(
-        `SELECT status FROM quotations WHERE quotation_id = ?`, [args.quotation_id]
-      )
-      const existing = rows[0]
-      if (!existing) return { error: `Quotation #${args.quotation_id} not found` }
-      if (existing.status === 'accepted') return { error: `Quotation #${args.quotation_id} is already accepted` }
-
-      await db.query(
-        `UPDATE quotations
-         SET    status = 'accepted',
-                updated_at = NOW()
-         WHERE  quotation_id = ?`,
+         WHERE q.quotation_id = ?`,
         [args.quotation_id]
       )
-      return { success: true, quotation_id: args.quotation_id, new_status: 'accepted', message: `Quotation #${args.quotation_id} has been accepted.` }
+      if (!q) return { error: `Quotation #${args.quotation_id} not found.` }
+      const items = await db.query(
+        `SELECT qi.*, t.fabric_type, t.color, t.design, p.product_name
+         FROM quotation_items qi
+         JOIN thans t ON t.than_id = qi.than_id
+         JOIN products p ON p.product_id = t.product_id
+         WHERE qi.quotation_id = ?`,
+        [args.quotation_id]
+      )
+      return { quotation: q, items, item_count: items.length }
     }
   },
 
   {
-    name: 'reject_quotation',
-    description: 'Reject (decline) a quotation and set its status to declined. A rejection reason is required. Use when user says reject or decline a quotation.',
-    parameters: { type: 'object', properties: {
-      quotation_id: { type: 'number', description: 'Quotation ID to reject.' },
-      reason:       { type: 'string', description: 'Reason for rejection.' }
-    }, required: ['quotation_id', 'reason'] },
+    name: 'update_quotation_status',
+    description:
+      'Update the status of a quotation. ' +
+      'Use when user says mark as accepted, decline this quote, or change status.',
+    parameters: {
+      type: 'object',
+      properties: {
+        quotation_id: { type: 'number' },
+        status: {
+          type: 'string',
+          enum: ['draft', 'sent', 'accepted', 'declined'],
+          description: 'New status for the quotation.'
+        }
+      },
+      required: ['quotation_id', 'status']
+    },
     execute: async (args, db) => {
-      const rows = await db.query(
-        `SELECT status FROM quotations WHERE quotation_id = ?`, [args.quotation_id]
+      const [existing] = await db.query(
+        'SELECT quotation_id, status FROM quotations WHERE quotation_id = ?',
+        [args.quotation_id]
       )
-      const existing = rows[0]
-      if (!existing) return { error: `Quotation #${args.quotation_id} not found` }
-      if (existing.status === 'declined') return { error: `Quotation #${args.quotation_id} is already declined` }
-
+      if (!existing) return { error: `Quotation #${args.quotation_id} not found.` }
       await db.query(
-        `UPDATE quotations
-         SET status = 'declined',
-             decline_reason = ?,
-             updated_at = NOW()
-         WHERE quotation_id = ?`,
-        [args.reason, args.quotation_id]
+        'UPDATE quotations SET status = ?, updated_at = NOW() WHERE quotation_id = ?',
+        [args.status, args.quotation_id]
       )
-      return { success: true, quotation_id: args.quotation_id, new_status: 'declined' }
+      return {
+        success: true,
+        quotation_id: args.quotation_id,
+        old_status: existing.status,
+        new_status: args.status
+      }
     }
   },
 
   {
-    name: 'list_all_quotations',
-    description: 'List quotations filtered by status. Use for accepted, declined, sent, or all quotations overview.',
-    parameters: { type: 'object', properties: {
-      status: { type: 'string', description: "Filter by status: 'draft', 'pending', 'sent', 'accepted', 'declined'. Omit for all." },
-      limit:  { type: 'number', description: 'Max results. Default 25.' }
-    }, required: [] },
-    execute: async (args, db) => {
-      const limit = args.limit ?? 25
-      const validStatuses = ['draft', 'pending', 'sent', 'accepted', 'declined']
-      const useStatus = args.status && validStatuses.includes(args.status)
-      const sql = useStatus
-        ? `SELECT q.quotation_id, q.quotation_number, q.status, q.total_amount,
-                  q.decline_reason, q.created_at, q.updated_at,
-                  c.customer_name, c.contact_phone
-           FROM   quotations q
-           LEFT JOIN customers c ON c.customer_id = q.customer_id
-           WHERE  q.status = ?
-           ORDER  BY q.updated_at DESC
-           LIMIT  ?`
-        : `SELECT q.quotation_id, q.quotation_number, q.status, q.total_amount,
-                  q.decline_reason, q.created_at, q.updated_at,
-                  c.customer_name, c.contact_phone
-           FROM   quotations q
-           LEFT JOIN customers c ON c.customer_id = q.customer_id
-           ORDER  BY q.updated_at DESC
-           LIMIT  ?`
-      const params = useStatus ? [args.status, limit] : [limit]
-      const rows = await db.query(sql, params)
-      return { quotations: rows, count: rows.length }
+    name: 'get_quotation_stats',
+    description:
+      'Returns conversion rates and aggregate stats for quotations. ' +
+      'Use when asked about quote performance, win rate, or conversion.',
+    parameters: { type: 'object', properties: {}, required: [] },
+    execute: async (_args, db) => {
+      const rows = await db.query(
+        `SELECT
+           COUNT(*)                                      AS total,
+           SUM(status='draft')                           AS draft,
+           SUM(status='sent')                            AS sent,
+           SUM(status='accepted')                        AS accepted,
+           SUM(status='declined')                        AS declined,
+           ROUND(100*SUM(status='accepted')/COUNT(*),1)  AS win_rate_pct,
+           ROUND(AVG(total_amount),2)                    AS avg_value,
+           ROUND(SUM(CASE WHEN status='accepted' THEN total_amount ELSE 0 END),2) AS won_value
+         FROM quotations`
+      )
+      return { stats: rows[0] }
     }
   }
 ]
