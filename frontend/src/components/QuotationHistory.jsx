@@ -81,10 +81,7 @@ export default function QuotationHistory({ user }) {
             .finally(() => setLoading(false))
     }, [user.user_id])
 
-    useEffect(() => {
-        const timer = setTimeout(load, 0)
-        return () => clearTimeout(timer)
-    }, [load])
+    useEffect(() => { load() }, [load])
 
     const viewDetail = async (id) => {
         if (selected === id) { setSelected(null); setDetail(null); return }

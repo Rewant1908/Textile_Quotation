@@ -110,7 +110,7 @@ function App() {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             fontFamily: 'sans-serif', fontSize: '15px', boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
         }}>
-            <span>Your session has expired. Redirecting to login…</span>
+            <span>⚠️ Your session has expired. Redirecting to login…</span>
             <button onClick={() => { setSessionExpired(false); handleLogout() }}
                 style={{ background: 'none', border: '1px solid #fff', color: '#fff',
                          padding: '4px 12px', borderRadius: '4px', cursor: 'pointer' }}>

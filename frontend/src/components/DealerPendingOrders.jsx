@@ -20,7 +20,7 @@ function urgencyColor(days) {
     return 'var(--kt-text-muted)'
 }
 
-export default function DealerPendingOrders() {
+export default function DealerPendingOrders({ user }) {
     const [rows, setRows]       = useState([])
     const [loading, setLoading] = useState(true)
     const [error, setError]     = useState(null)

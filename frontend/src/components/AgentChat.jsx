@@ -1,6 +1,6 @@
 // AgentChat.jsx — SSE-streaming multi-agent chat UI
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import API from '../api'
 
 // ── Agent definitions ──────────────────────────────────────────────────────────────
@@ -81,6 +81,12 @@ function renderMarkdown(text) {
 function RotatingStarters({ starters, onSelect }) {
   const [activeIdx, setActiveIdx] = useState(0)
   const [visible,   setVisible]   = useState(true)
+
+  useEffect(() => {
+    if (!starters.length) return
+    setActiveIdx(0)
+    setVisible(true)
+  }, [starters])
 
   useEffect(() => {
     if (starters.length <= 1) return
@@ -200,7 +206,7 @@ function StepsPanel({ steps, done }) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function AgentChat() {
+export default function AgentChat({ user }) {
   const [agent,     setAgent]     = useState('coordinator')
   const [messages,  setMessages]  = useState([])
   const [query,     setQuery]     = useState('')
@@ -224,7 +230,7 @@ export default function AgentChat() {
     setLoading(false)
   }
 
-  const sendMessage = async (overrideText) => {
+  const sendMessage = useCallback(async (overrideText) => {
     const text = (overrideText ?? query).trim()
     if (!text || loading) return
 
@@ -303,19 +309,17 @@ export default function AgentChat() {
     } catch (err) {
       failWith(err.message || 'Network error')
     }
-  }
+  }, [agent, query, loading, sessionId])
 
-  const newChat = async () => {
+  const newChat = useCallback(async () => {
     esRef.current?.close()
-    try { await API.delete(`/agents/session/${sessionId}`) } catch {
-      // Session cleanup is best-effort; starting a new chat should still work.
-    }
+    try { await API.delete(`/agents/session/${sessionId}`) } catch (_) {}
     setMessages([])
     setSessionId(newUUID())
     setLoading(false)
     setQuery('')
     textareaRef.current?.focus()
-  }
+  }, [sessionId])
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
@@ -364,7 +368,7 @@ export default function AgentChat() {
             <div className="ac-empty">
               <span className="ac-empty-emoji">{selectedAgent?.emoji}</span>
               <p>Ask the <strong>{selectedAgent?.label}</strong> agent anything — it can read data <em>and</em> take actions.</p>
-            <RotatingStarters key={agent} starters={starters} onSelect={sendMessage} />
+            <RotatingStarters starters={starters} onSelect={sendMessage} />
               <p className="ac-empty-hint">Enter to send · Shift+Enter for new line</p>
             </div>
           )}

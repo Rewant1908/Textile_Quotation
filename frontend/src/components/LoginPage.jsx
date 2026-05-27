@@ -131,13 +131,14 @@ export default function LoginPage({ onLogin }) {
   const [error,         setError]         = useState('')
   const [success,       setSuccess]       = useState('')
   const [loading,       setLoading]       = useState(false)
+  const [preloaderDone, setPreloaderDone] = useState(false)
   const ranRef = useRef(false)
 
   useEffect(() => {
     if (ranRef.current) return
     ranRef.current = true
     gsap.set('.page-reveal', { opacity: 0, y: 18, filter: 'blur(6px)' })
-    runPreloader(() => {})
+    runPreloader(() => setPreloaderDone(true))
     let cleanup
     if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
       cleanup = mountRippleCanvas()
@@ -231,25 +232,16 @@ export default function LoginPage({ onLogin }) {
             <div className="public-hero-copy">
               <p className="eyebrow">Established around 2002 | Birgunj, Nepal</p>
               <h1>KT Impex</h1>
-              <p>A premium wholesale textile operating portal connecting trusted factories, serious dealers, live quotations, stock intelligence, and dispatch visibility.</p>
+              <p>A wholesale textile firm connecting trusted factories with dealers through finished cloth lots for suiting, shirting, pant pieces, school dress fabric, and dress material supply.</p>
               <div className="hero-actions">
                 <a className="btn btn-primary" href="#about">Explore Company</a>
                 <a className="btn btn-secondary" href="#login">Generate Quotation</a>
-              </div>
-              <div className="hero-stat-grid" aria-label="KT Impex trade highlights">
-                <span><strong>20+</strong> Years in textile trade</span>
-                <span><strong>4</strong> Dealer portal workflows</span>
-                <span><strong>13%</strong> VAT-ready quotations</span>
               </div>
             </div>
             <div className="cinematic-showcase" aria-label="Animated hanging fabric samples">
               <div className="studio-light light-left" />
               <div className="studio-light light-right" />
               <div className="camera-scan" />
-              <div className="showcase-caption">
-                <span>Live Textile Desk</span>
-                <strong>Factory lots to dealer quotation in one flow</strong>
-              </div>
               <div className="fabric-rack">
                 <div className="rack-line" />
                 <div className="fabric-track">
@@ -386,17 +378,6 @@ export default function LoginPage({ onLogin }) {
             </div>
           </section>
         </main>
-        <footer className="public-footer">
-          <div>
-            <strong>KT Impex</strong>
-            <span>Premium Textile Wholesale, Birgunj, Nepal</span>
-          </div>
-          <nav aria-label="Footer links">
-            <a href="#about">About</a>
-            <a href="#fabrics">Fabrics</a>
-            <a href="#login">Dealer Login</a>
-          </nav>
-        </footer>
       </div>
     </>
   )
