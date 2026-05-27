@@ -50,7 +50,7 @@ export default function RetailerManager({ user }) {
         try {
             const res = await API.get('/retailers')
             setRetailers(Array.isArray(res.data) ? res.data : [])
-        } catch (e) { setError('Could not load retailers') }
+        } catch { setError('Could not load retailers') }
         finally { setLoading(false) }
     }, [])
 

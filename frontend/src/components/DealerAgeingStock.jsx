@@ -14,7 +14,7 @@ const SPEED_STYLE = {
     dead: { bg: '#fef2f2', border: '#fecaca', badge: '#fee2e2', badgeText: '#991b1b', label: 'Clearance' },
 }
 
-export default function DealerAgeingStock({ user }) {
+export default function DealerAgeingStock() {
     const [rows, setRows]       = useState([])
     const [filter, setFilter]   = useState('all')   // 'all' | 'slow' | 'dead'
     const [loading, setLoading] = useState(true)

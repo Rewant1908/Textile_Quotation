@@ -15,7 +15,7 @@ const BUCKET_COLOR = {
     '90+ days':   { bg: '#fef2f2', border: '#fecaca', text: '#b91c1c', badge: '#fee2e2', badgeText: '#991b1b' },
 }
 
-export default function DealerReceivables({ user }) {
+export default function DealerReceivables() {
     const [data, setData]     = useState(null)
     const [loading, setLoading] = useState(true)
     const [error, setError]   = useState(null)

@@ -4,7 +4,13 @@
 export default function Footer() {
     return (
         <footer className="kt-footer">
-            KT Impex, Birgunj, Nepal &nbsp;|&nbsp; Dealer quotation and factory sourcing portal
+            <div className="kt-footer-inner">
+                <div>
+                    <strong>KT Impex</strong>
+                    <span>Birgunj, Nepal</span>
+                </div>
+                <p>Dealer quotation, receivables, stock offer, and dispatch portal</p>
+            </div>
         </footer>
     )
 }

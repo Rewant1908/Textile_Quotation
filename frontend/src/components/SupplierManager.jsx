@@ -7,7 +7,7 @@ const EMPTY = {
     popular_categories: '', return_issues: '', trend_alignment: 'average'
 }
 
-export default function SupplierManager({ user }) {
+export default function SupplierManager() {
     const [suppliers, setSuppliers] = useState([])
     const [form, setForm]           = useState(EMPTY)
     const [editId, setEditId]       = useState(null)

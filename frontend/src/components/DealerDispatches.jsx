@@ -26,7 +26,7 @@ const DELIVERY_STATUS_STYLE = {
     returned:           { color: '#b91c1c', label: 'Returned' },
 }
 
-export default function DealerDispatches({ user }) {
+export default function DealerDispatches() {
     const [rows, setRows]           = useState([])
     const [migPending, setMigPending] = useState(false)
     const [loading, setLoading]     = useState(true)
